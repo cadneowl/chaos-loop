@@ -17,6 +17,8 @@ import typer
 from rich.console import Console
 
 from agents._cli import notice
+from agents.diagnostician.tools.code_reader import TargetCodeReader
+from agents.tester.hypothesizer import ClaudeHypothesizer, Hypothesizer
 from agents.tester.probes import (
     Probe,
     ProbeResult,
@@ -24,7 +26,7 @@ from agents.tester.probes import (
     probes_for_target,
 )
 from agents.tester.tools.prometheus import HttpxPromBackend, PromBackend
-from shared.contracts import StatisticalSample, TesterReport, TesterRequest
+from shared.contracts import Hypothesis, StatisticalSample, TesterReport, TesterRequest
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -68,10 +70,17 @@ class ClaudeTesterAgent:
         *,
         prom_backend: PromBackend | None = None,
         probes_dir: Path | None = None,
+        hypothesizer: Hypothesizer | None = None,
+        code: TargetCodeReader | None = None,
         model: str = "claude-opus-4-7",
     ) -> None:
         self._prom = prom_backend
         self._probes_dir = probes_dir
+        # The hypothesizer is the LLM seam. Default to ClaudeHypothesizer which
+        # raises a clear error if its deps (claude CLI + API access) aren't ready.
+        # Tests pass a FixtureHypothesizer; the dry-run profile does the same via the factory.
+        self._hypothesizer = hypothesizer or ClaudeHypothesizer()
+        self._code = code
         self.model = model
 
     def _backend(self) -> PromBackend:
@@ -83,6 +92,53 @@ class ClaudeTesterAgent:
     async def baseline(self, req: TesterRequest) -> TesterReport:
         """Run the target's probe set once and return a TesterReport."""
         return await self._run_probes(req, request_kind="baseline")
+
+    async def hypothesize(self, req: TesterRequest) -> TesterReport:
+        """Generate code-grounded chaos hypotheses for the target.
+
+        Delegates the cognitive step to the Hypothesizer. Post-validates each
+        hypothesis's proposed_fault against the fault catalogue so hallucinations
+        are dropped, not propagated to the chaos agent.
+        """
+        from agents.chaos.faults._meta import CATALOGUE
+
+        try:
+            raw = await self._hypothesizer.generate(
+                target_app=req.target_app,
+                target_repo=req.target_repo,
+                code=self._code,
+            )
+        except Exception as e:
+            return TesterReport(
+                request_kind="hypothesize",
+                experiment_id=req.experiment_id,
+                steady_state=False,
+                anomalies=[f"hypothesizer error: {e!r}"],
+                notes="no hypotheses generated",
+            )
+
+        valid: list[Hypothesis] = []
+        rejected: list[str] = []
+        for h in raw:
+            if h.proposed_fault not in CATALOGUE:
+                rejected.append(
+                    f"{h.id}: proposed_fault {h.proposed_fault!r} not in catalogue"
+                )
+                continue
+            valid.append(h)
+
+        notes_parts = [f"generated {len(raw)} hypotheses, {len(valid)} accepted"]
+        if rejected:
+            notes_parts.append(f"rejected: {'; '.join(rejected[:5])}")
+
+        return TesterReport(
+            request_kind="hypothesize",
+            experiment_id=req.experiment_id,
+            steady_state=True,  # hypothesize doesn't have a steady-state notion
+            generated_hypotheses=valid,
+            anomalies=rejected,
+            notes="; ".join(notes_parts),
+        )
 
     async def verify(self, req: TesterRequest) -> TesterReport:
         """
@@ -223,11 +279,33 @@ def verify(
 
 @app.command()
 def hypothesize(
-    target_repo: str = typer.Option(..., "--target-repo", help="git URL of the target"),
+    target: str = typer.Option(..., "--target", help="target_app identifier"),
+    target_repo_path: str = typer.Option(
+        ...,
+        "--target-repo-path",
+        envvar="TARGET_REPO_PATH",
+        help="LOCAL path to a checkout of the target repo",
+    ),
+    target_repo: str | None = typer.Option(None, "--target-repo", help="git URL (informational)"),
 ) -> None:
-    """Generate hypotheses by reading the target source code."""
-    notice("tester", "hypothesize", "milestone-2.4",
-           hint=f"would read {target_repo} and emit Hypothesis objects")
+    """Generate hypotheses by reading the target source code.
+
+    Runs a real LLM via claude-agent-sdk; requires the ``claude`` CLI on PATH
+    and Anthropic API access. Costs real money (typically $0.50 to $3 per call).
+    """
+    repo_path = Path(target_repo_path)
+    if not repo_path.is_dir():
+        typer.echo(f"error: target-repo-path is not a directory: {repo_path}", err=True)
+        raise typer.Exit(code=2)
+    agent = ClaudeTesterAgent(code=TargetCodeReader(repo_path))
+    req = TesterRequest(
+        kind="hypothesize",
+        experiment_id=_new_experiment_id(),
+        target_app=target,
+        target_repo=target_repo,
+    )
+    report = asyncio.run(agent.hypothesize(req))
+    console.print_json(json.dumps(report.model_dump(mode="json")))
 
 
 @app.command()
