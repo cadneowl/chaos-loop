@@ -1,0 +1,82 @@
+[project]
+name = "chaos"
+version = "0.0.1"
+description = "Closed-loop, security-aware chaos engineering with Claude agents."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "kosta" }]
+
+dependencies = [
+    # Agent SDK
+    "claude-agent-sdk>=0.1.0",
+    # Contracts
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    # Orchestration
+    "structlog>=24.1",
+    "rich>=13.7",
+    "typer>=0.12",
+    # Kubernetes
+    "kubernetes>=29.0",
+    # Observability clients
+    "prometheus-api-client>=0.5.5",
+    "httpx>=0.27",
+    # Persistence
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+    # YAML
+    "pyyaml>=6.0",
+    # Testing the target
+    "playwright>=1.43",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+[project.scripts]
+chaos = "orchestrator.main:app"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer's pattern is `arg: T = typer.Option(...)`, which ruff's B008 flags as a
+# function-call-in-default. This is the documented typer convention; suppress here.
+"**/agent.py" = ["B008"]
+"**/tools.py" = ["B008"]
+"**/pr_template.py" = ["B008"]
+"**/similarity.py" = ["B008"]
+"orchestrator/main.py" = ["B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    # pytest tries to collect any class named Test* — even Pydantic models imported into a test file.
+    # We belt-and-suspenders this with __test__ = False on the relevant classes too.
+    "ignore::pytest.PytestCollectionWarning",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared", "orchestrator", "agents"]

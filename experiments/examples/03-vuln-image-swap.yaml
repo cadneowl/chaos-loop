@@ -1,0 +1,37 @@
+# Hypothesis: admission policy rejects deployment of a known-vulnerable image.
+# Maps to: target/hypotheses-seed.yaml h-otel-recommendation-image-004 (variant)
+experiment_id: exp-000000000003
+title: "Admission policy rejects vulnerable image for recommendationservice"
+target_app: otel-demo
+target_repo: https://github.com/open-telemetry/opentelemetry-demo
+
+faults:
+  - category: image
+    name: image.swap_vuln
+    target_selector:
+      app.kubernetes.io/component: recommendationservice
+    parameters:
+      fixture_image: "local/chaos-fixture-vuln:0.1"
+      expected_admission_decision: "deny"
+    duration_seconds: 30
+    requires_approval: true  # security-flavored faults that resemble attacks
+    rationale: |
+      Verify admission policy + image scanner enforce supply-chain controls.
+      Success = the deployment is rejected by an admission webhook (Kyverno/Gatekeeper/
+      our policy) before any pod is created. Failure = pod schedules with vulnerable image.
+
+safety:
+  cluster_context: kind-chaos
+  namespace: otel-demo
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  allow_multi_fault: false
+  require_namespace_annotation: true
+
+budget:
+  soft_cap_usd: 1.0
+  hard_cap_usd: 5.0
+  wall_clock_seconds: 900
+
+quiet_window_pre_seconds: 30
+quiet_window_post_seconds: 30

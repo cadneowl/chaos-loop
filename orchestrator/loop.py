@@ -1,0 +1,224 @@
+"""
+The orchestration state machine.
+
+Deterministic Python. Calls into agent adapters for the cognitive work; owns all
+state transitions, safety gates, and persistence.
+
+In v0 (this commit), agent adapters are protocols and the loop body has
+``raise NotImplementedError`` markers where real agent invocations will plug in.
+Once `agents/*/agent.py` exposes concrete `invoke(...)` callables matching the
+Protocol, the loop runs end-to-end without changes here.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Protocol
+
+from orchestrator import safety
+from orchestrator.budget import BudgetTracker
+from orchestrator.store import ExperimentStore
+from shared.contracts import (
+    AbortReason,
+    ChaosTimeline,
+    DiagnosisReport,
+    DiagnosisRequest,
+    ExperimentPlan,
+    ExperimentRecord,
+    ExperimentState,
+    FixProposal,
+    SecurityReport,
+    SecurityRequest,
+    TesterReport,
+    TesterRequest,
+)
+
+log = logging.getLogger(__name__)
+
+
+# ---------- agent adapter protocols --------------------------------------------
+
+
+class TesterAgent(Protocol):
+    async def baseline(self, req: TesterRequest) -> TesterReport: ...
+    async def verify(self, req: TesterRequest) -> TesterReport: ...
+
+
+class SecurityAgent(Protocol):
+    async def baseline(self, req: SecurityRequest) -> SecurityReport: ...
+    async def verify(self, req: SecurityRequest) -> SecurityReport: ...
+
+
+class ChaosAgent(Protocol):
+    async def execute(self, plan: ExperimentPlan) -> ChaosTimeline: ...
+    async def cleanup(self, plan: ExperimentPlan) -> None: ...
+
+
+class DiagnosticianAgent(Protocol):
+    async def diagnose(self, req: DiagnosisRequest) -> DiagnosisReport: ...
+
+
+class FixerAgent(Protocol):
+    async def propose_fix(self, diagnosis: DiagnosisReport) -> FixProposal: ...
+
+
+@dataclass
+class Agents:
+    tester: TesterAgent
+    security: SecurityAgent
+    chaos: ChaosAgent
+    diagnostician: DiagnosticianAgent
+    fixer: FixerAgent
+
+
+# ---------- loop ---------------------------------------------------------------
+
+
+class ExperimentRunner:
+    def __init__(self, agents: Agents, store: ExperimentStore) -> None:
+        self.agents = agents
+        self.store = store
+
+    async def run(self, plan: ExperimentPlan) -> ExperimentRecord:
+        record = ExperimentRecord(
+            experiment_id=plan.experiment_id,
+            plan=plan,
+            state=ExperimentState.INITIALIZING,
+        )
+        self.store.save(record)
+        budget = BudgetTracker(plan.budget)
+
+        # --- pre-flight safety gates ----------------------------------------
+        if fail := safety.check_cluster_allowed(plan.safety):
+            return self._abort(record, fail.reason, fail.detail)
+        if fail := safety.check_blast_radius(plan):
+            return self._abort(record, fail.reason, fail.detail)
+
+        # --- baseline -------------------------------------------------------
+        record.state = ExperimentState.BASELINE
+        self.store.save(record)
+
+        record.tester_baseline = await self.agents.tester.baseline(
+            TesterRequest(
+                kind="baseline",
+                experiment_id=plan.experiment_id,
+                target_app=plan.target_app,
+                target_repo=plan.target_repo,
+            )
+        )
+        record.security_baseline = await self.agents.security.baseline(
+            SecurityRequest(
+                kind="baseline",
+                experiment_id=plan.experiment_id,
+                target_app=plan.target_app,
+                target_repo=plan.target_repo,
+            )
+        )
+
+        if fail := safety.check_baseline_healthy(
+            record.tester_baseline, record.security_baseline
+        ):
+            record.state = ExperimentState.BASELINE_FAIL
+            return self._abort(record, fail.reason, fail.detail)
+        record.state = ExperimentState.BASELINE_OK
+        self.store.save(record)
+
+        if fail := safety.check_budget(budget.spent_usd, plan.budget.hard_cap_usd):
+            return self._abort(record, fail.reason, fail.detail)
+
+        # --- inject ---------------------------------------------------------
+        record.state = ExperimentState.INJECT
+        self.store.save(record)
+
+        try:
+            record.chaos_timeline = await self.agents.chaos.execute(plan)
+        except Exception as e:
+            record.state = ExperimentState.INJECT_FAILED
+            return self._abort(record, AbortReason.AGENT_FAILURE, f"chaos.execute raised: {e!r}")
+
+        if not record.chaos_timeline.success:
+            record.state = ExperimentState.INJECT_FAILED
+            return self._abort(
+                record, AbortReason.AGENT_FAILURE, record.chaos_timeline.error or "unknown"
+            )
+        record.state = ExperimentState.INJECTED
+        self.store.save(record)
+
+        # --- verify ---------------------------------------------------------
+        record.state = ExperimentState.VERIFY
+        self.store.save(record)
+
+        record.tester_verify = await self.agents.tester.verify(
+            TesterRequest(
+                kind="verify",
+                experiment_id=plan.experiment_id,
+                target_app=plan.target_app,
+                target_repo=plan.target_repo,
+            )
+        )
+        record.security_verify = await self.agents.security.verify(
+            SecurityRequest(
+                kind="verify",
+                experiment_id=plan.experiment_id,
+                target_app=plan.target_app,
+                target_repo=plan.target_repo,
+            )
+        )
+
+        regressed = (
+            not record.tester_verify.steady_state
+            or record.security_verify.has_critical_or_high
+            or record.security_verify.sbom_drift_from_baseline
+        )
+
+        if not regressed:
+            record.state = ExperimentState.STEADY
+            return self._finish(record)
+
+        # --- diagnose -------------------------------------------------------
+        record.state = ExperimentState.REGRESSED
+        self.store.save(record)
+        record.state = ExperimentState.DIAGNOSE
+        record.diagnosis = await self.agents.diagnostician.diagnose(
+            DiagnosisRequest(
+                experiment_id=plan.experiment_id,
+                failed_tester_report=(
+                    record.tester_verify if not record.tester_verify.steady_state else None
+                ),
+                failed_security_report=(
+                    record.security_verify
+                    if record.security_verify.has_critical_or_high
+                    or record.security_verify.sbom_drift_from_baseline
+                    else None
+                ),
+                chaos_timeline=record.chaos_timeline,
+                target_repo=plan.target_repo,
+            )
+        )
+        record.state = ExperimentState.DIAGNOSED
+        self.store.save(record)
+
+        # --- propose fix ----------------------------------------------------
+        record.state = ExperimentState.PROPOSE_FIX
+        record.fix_proposal = await self.agents.fixer.propose_fix(record.diagnosis)
+        record.state = ExperimentState.FIX_PROPOSED
+        return self._finish(record)
+
+    def _abort(
+        self,
+        record: ExperimentRecord,
+        reason: AbortReason,
+        detail: str,
+    ) -> ExperimentRecord:
+        log.warning("experiment %s aborted: %s — %s", record.experiment_id, reason, detail)
+        record.state = ExperimentState.ABORTED
+        record.abort_reason = reason
+        record.abort_detail = detail
+        self.store.save(record)
+        return record
+
+    def _finish(self, record: ExperimentRecord) -> ExperimentRecord:
+        record.state = ExperimentState.RECORDED
+        self.store.save(record)
+        return record

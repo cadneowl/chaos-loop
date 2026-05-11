@@ -1,0 +1,49 @@
+# Curated starter hypotheses for the OpenTelemetry Demo.
+# Loaded by the tester agent when no prior history exists for this target.
+#
+# Each entry maps to a fault in agents/chaos/faults/_meta.py.
+# Confidence is a hand-rated guess of "does this expose a real fragility?".
+
+hypotheses:
+  - id: h-otel-cart-redis-001
+    statement: "cartservice must serve a usable (possibly degraded) response when valkey-cart is unreachable."
+    rationale: "cartservice has a hard dependency on valkey-cart with no documented fallback; verify behavior under network loss."
+    proposed_fault: network.loss
+    success_criteria:
+      - "GET /api/cart returns 503 or empty cart within 2s (not a 5s+ timeout cascade)"
+      - "frontend renders a 'cart unavailable' state, not a generic 500"
+    confidence: 0.85
+    code_references:
+      - "src/cartservice/src/services/CartService.cs"
+
+  - id: h-otel-frontend-tls-002
+    statement: "frontendproxy must refuse TLS 1.0 / plaintext connections even when the upstream is degraded."
+    rationale: "TLS downgrade is a common gap when error paths route through different proxies."
+    proposed_fault: tls.downgrade
+    success_criteria:
+      - "ZAP active scan reports no TLS 1.0/1.1 acceptance during chaos window"
+    confidence: 0.5
+
+  - id: h-otel-checkout-kafka-003
+    statement: "checkoutservice must complete order placement when Kafka has 200ms latency (using async write)."
+    rationale: "checkout publishes order events to Kafka; if writes are synchronous, latency cascades to user."
+    proposed_fault: network.delay
+    success_criteria:
+      - "POST /api/checkout p95 latency does not increase by more than 50ms during chaos"
+    confidence: 0.6
+
+  - id: h-otel-recommendation-image-004
+    statement: "admission policy must reject deployment of an unsigned image to the recommendationservice."
+    rationale: "Supply chain control: only cosign-signed images should run."
+    proposed_fault: image.swap_unsigned
+    success_criteria:
+      - "kubectl apply of unsigned variant returns admission webhook denial"
+    confidence: 0.7
+
+  - id: h-otel-frontend-auth-005
+    statement: "frontendproxy must not expose admin endpoints under load (no error-page bypass)."
+    rationale: "Some proxies fail open under stress; verify behavior."
+    proposed_fault: stress.cpu
+    success_criteria:
+      - "ZAP baseline scan finds no newly exposed endpoints under chaos window"
+    confidence: 0.4

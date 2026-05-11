@@ -1,0 +1,38 @@
+# Hypothesis: frontendproxy fails closed (refuses traffic) when its TLS cert is unreachable for revocation check.
+experiment_id: exp-000000000002
+title: "OTel frontendproxy fails closed on cert revocation check failure"
+target_app: otel-demo
+target_repo: https://github.com/open-telemetry/opentelemetry-demo
+
+faults:
+  - category: cert
+    name: cert.revoke
+    target_selector:
+      app.kubernetes.io/component: frontendproxy
+    parameters:
+      block_domains:
+        - "ocsp.digicert.com"
+        - "crl.digicert.com"
+    duration_seconds: 120
+    requires_approval: false
+    rationale: |
+      frontendproxy is the public-facing TLS terminator; test behavior when OCSP/CRL
+      endpoints are unreachable. Acceptable behaviors: cache hit (no change), soft-fail
+      with logged warning, hard-fail with 5xx. Unacceptable: silent fallback to no
+      revocation check.
+
+safety:
+  cluster_context: kind-chaos
+  namespace: otel-demo
+  max_pods_affected: 1
+  max_duration_seconds: 180
+  allow_multi_fault: false
+  require_namespace_annotation: true
+
+budget:
+  soft_cap_usd: 1.0
+  hard_cap_usd: 5.0
+  wall_clock_seconds: 900
+
+quiet_window_pre_seconds: 60
+quiet_window_post_seconds: 60
