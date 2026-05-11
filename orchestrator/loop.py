@@ -155,6 +155,9 @@ class ExperimentRunner:
                 experiment_id=plan.experiment_id,
                 target_app=plan.target_app,
                 target_repo=plan.target_repo,
+                baseline_samples=(
+                    record.tester_baseline.samples if record.tester_baseline else []
+                ),
             )
         )
         record.security_verify = await self.agents.security.verify(

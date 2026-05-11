@@ -208,6 +208,13 @@ class TesterRequest(BaseModel):
         default_factory=list,
         description="Identifiers for probe suites to run; empty = use defaults",
     )
+    baseline_samples: list[StatisticalSample] = Field(
+        default_factory=list,
+        description=(
+            "Prior baseline distributions, keyed by metric. Used by verify mode for "
+            "statistical comparison. Ignored in baseline / hypothesize modes."
+        ),
+    )
 
 
 class TesterReport(BaseModel):

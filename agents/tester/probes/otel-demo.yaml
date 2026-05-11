@@ -1,0 +1,47 @@
+# Probe set for the OpenTelemetry Demo.
+#
+# These are starter queries. Real metric names vary by demo version and
+# observability stack configuration; tune against a live target.
+#
+# Convention: keep queries readable. If you need complex aggregation,
+# define a Prometheus recording rule rather than inlining here.
+
+probes:
+  - name: services_up
+    description: "All demo services advertise up=1"
+    query: 'sum(up{namespace="otel-demo"}) > 0'
+    mode: instant
+    expect:
+      kind: result_not_empty
+    metric_name: services_up
+
+  - name: frontend_5xx_rate
+    description: "Frontend 5xx error rate over the last 5 minutes; healthy = below 5%"
+    query: |-
+      sum(rate(http_server_request_duration_seconds_count{
+        service_name="frontend", http_response_status_code=~"5.."
+      }[5m]))
+      /
+      clamp_min(sum(rate(http_server_request_duration_seconds_count{
+        service_name="frontend"
+      }[5m])), 0.0001)
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 0.05
+    metric_name: frontend_5xx_rate
+
+  - name: cart_p95_latency_ms
+    description: "Cart service p95 request latency in milliseconds; healthy = below 500ms"
+    query: |-
+      histogram_quantile(
+        0.95,
+        sum(rate(http_server_request_duration_seconds_bucket{
+          service_name="cartservice"
+        }[5m])) by (le)
+      ) * 1000
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 500
+    metric_name: cart_p95_latency_ms

@@ -1,0 +1,21 @@
+# Synthetic probe set for testing / dev. Queries are designed to be cheap
+# and to work against any Prometheus instance for smoke-testing the wiring.
+
+probes:
+  - name: prometheus_self_up
+    description: "Prometheus reports its own up=1"
+    query: 'up{job="prometheus"}'
+    mode: instant
+    expect:
+      kind: result_not_empty
+    metric_name: prometheus_self_up
+
+  - name: scrape_duration_p95_ms
+    description: "p95 of scrape_duration_seconds across all targets (in ms)"
+    query: |-
+      quantile(0.95, scrape_duration_seconds) * 1000
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 1000
+    metric_name: scrape_duration_p95_ms
