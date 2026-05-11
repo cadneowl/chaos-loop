@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from agents._harness import Harness
 from agents.chaos.agent import ClaudeChaosAgent
 from agents.chaos.cluster import ClusterIO
 from agents.diagnostician.agent import ClaudeDiagnosticianAgent
@@ -67,6 +68,7 @@ def build_real_agents(
     diagnoser: Diagnoser | None = None,
     fixer_strategy: FixerStrategy | None = None,
     code_reader: TargetCodeReader | None = None,
+    harness: Harness | None = None,
 ) -> Agents:
     """Construct real ClaudeXAgent instances wired to their backends.
 
@@ -116,6 +118,18 @@ def build_real_agents(
 
     # Fixer: strategy default is ClaudeFixerStrategy (stub raises until M6.x).
     fixer = ClaudeFixerAgent(strategy=fixer_strategy or ClaudeFixerStrategy())
+
+    # If a Harness was supplied, wrap each agent so the orchestrator gets a
+    # uniform invocation log across all of them. Wrapped agents satisfy the
+    # same Protocol; the orchestrator can't tell them apart.
+    if harness is not None:
+        return Agents(
+            tester=harness.instrument("tester", tester),  # type: ignore[arg-type]
+            chaos=harness.instrument("chaos", chaos),  # type: ignore[arg-type]
+            security=harness.instrument("security", security),  # type: ignore[arg-type]
+            diagnostician=harness.instrument("diagnostician", diagnostician),  # type: ignore[arg-type]
+            fixer=harness.instrument("fixer", fixer),  # type: ignore[arg-type]
+        )
 
     return Agents(
         tester=tester,

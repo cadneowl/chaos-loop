@@ -433,6 +433,20 @@ class ExperimentState(StrEnum):
     RECORDED = "recorded"
 
 
+class AgentInvocationLog(BaseModel):
+    """One coroutine call through the meta harness. Stored on ExperimentRecord."""
+
+    agent: str
+    method: str
+    started_at_ms: int
+    finished_at_ms: int | None = None
+    duration_ms: float | None = None
+    ok: bool
+    error: str | None = None
+    input_summary: str = ""
+    output_summary: str = ""
+
+
 class ExperimentRecord(BaseModel):
     """The full audit trail of one experiment run. Persisted to SQLite."""
 
@@ -451,3 +465,4 @@ class ExperimentRecord(BaseModel):
     started_at: datetime = Field(default_factory=_now)
     finished_at: datetime | None = None
     spend_usd: float = 0.0
+    agent_invocations: list[AgentInvocationLog] = Field(default_factory=list)

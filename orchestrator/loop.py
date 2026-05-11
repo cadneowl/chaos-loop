@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from orchestrator import safety
 from orchestrator.budget import BudgetTracker
@@ -76,9 +76,16 @@ class Agents:
 
 
 class ExperimentRunner:
-    def __init__(self, agents: Agents, store: ExperimentStore) -> None:
+    def __init__(
+        self,
+        agents: Agents,
+        store: ExperimentStore,
+        *,
+        harness: Any | None = None,  # agents._harness.Harness; typed loosely to avoid the import cycle
+    ) -> None:
         self.agents = agents
         self.store = store
+        self.harness = harness
 
     async def run(self, plan: ExperimentPlan) -> ExperimentRecord:
         record = ExperimentRecord(
@@ -86,6 +93,7 @@ class ExperimentRunner:
             plan=plan,
             state=ExperimentState.INITIALIZING,
         )
+        self._attach_invocations(record)
         self.store.save(record)
         budget = BudgetTracker(plan.budget)
 
@@ -208,6 +216,20 @@ class ExperimentRunner:
         record.state = ExperimentState.FIX_PROPOSED
         return self._finish(record)
 
+    def _attach_invocations(self, record: ExperimentRecord) -> None:
+        """Copy the latest harness invocations onto the record before each save.
+
+        Re-imports lazily to avoid a hard dep on the harness from the loop:
+        the orchestrator can run without one (tests/dry-run).
+        """
+        if self.harness is None:
+            return
+        from shared.contracts import AgentInvocationLog
+
+        record.agent_invocations = [
+            AgentInvocationLog(**vars(inv)) for inv in self.harness.invocations
+        ]
+
     def _abort(
         self,
         record: ExperimentRecord,
@@ -218,10 +240,12 @@ class ExperimentRunner:
         record.state = ExperimentState.ABORTED
         record.abort_reason = reason
         record.abort_detail = detail
+        self._attach_invocations(record)
         self.store.save(record)
         return record
 
     def _finish(self, record: ExperimentRecord) -> ExperimentRecord:
         record.state = ExperimentState.RECORDED
+        self._attach_invocations(record)
         self.store.save(record)
         return record

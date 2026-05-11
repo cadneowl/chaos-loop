@@ -69,11 +69,20 @@ def run(
     plan = _load_plan(plan_path)
     store = _store(db)
 
+    from agents._harness import Harness
+
+    harness = Harness()
+
     if dry_run:
         from agents._mocks import build_mock_agents
 
         agent_dict = build_mock_agents()
-        agents = Agents(**agent_dict)
+        # Wrap every mock through the harness so dry-run still produces
+        # invocation logs (useful for testing the harness itself end-to-end).
+        wrapped = {
+            name: harness.instrument(name, inst) for name, inst in agent_dict.items()
+        }
+        agents = Agents(**wrapped)  # type: ignore[arg-type]
     else:
         from agents._factory import AgentConfig, build_real_agents
 
@@ -82,9 +91,9 @@ def run(
             loki_url=loki_url,
             target_repo_path=target_repo_path,
         )
-        agents = build_real_agents(cfg)
+        agents = build_real_agents(cfg, harness=harness)
 
-    runner = ExperimentRunner(agents=agents, store=store)
+    runner = ExperimentRunner(agents=agents, store=store, harness=harness)
     record = asyncio.run(runner.run(plan))
     console.print_json(json.dumps(record.model_dump(mode="json")))
 

@@ -2,6 +2,7 @@
 
 from shared.contracts import (
     AbortReason,
+    AgentInvocationLog,
     AgentKind,
     ChaosTimeline,
     DiagnosisReport,
@@ -31,6 +32,7 @@ from shared.contracts import (
 
 __all__ = [
     "AbortReason",
+    "AgentInvocationLog",
     "AgentKind",
     "ChaosTimeline",
     "DiagnosisReport",
