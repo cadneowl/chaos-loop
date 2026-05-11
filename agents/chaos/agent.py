@@ -10,6 +10,9 @@ import yaml
 
 from agents._cli import notice
 from agents.chaos.faults import _meta
+from agents.chaos.faults._render import RenderContext
+from agents.chaos.faults.registry import has_renderer
+from agents.chaos.faults.registry import render as render_fault
 from shared.contracts import ChaosTimeline, ExperimentPlan, TimelineEvent
 
 
@@ -74,7 +77,7 @@ def render(
     plan_path: Path = typer.Argument(..., exists=True, readable=True),
     index: int = typer.Option(0, "--index", help="fault index in the plan"),
 ) -> None:
-    """Render one FaultSpec to YAML on stdout. No apply."""
+    """Render one FaultSpec to its Chaos Mesh CRD YAML on stdout. No apply."""
     raw = yaml.safe_load(plan_path.read_text())
     plan = ExperimentPlan.model_validate(raw)
     if index >= len(plan.faults):
@@ -84,9 +87,14 @@ def render(
     if fault.name not in _meta.CATALOGUE:
         typer.echo(f"unknown fault: {fault.name}", err=True)
         raise typer.Exit(1)
-    kind = _meta.CATALOGUE[fault.name].chaos_mesh_kind or "custom"
-    notice("chaos", "render", "milestone-3.0",
-           hint=f"would render {fault.name!r} as {kind} CRD")
+    if not has_renderer(fault.name):
+        kind = _meta.CATALOGUE[fault.name].chaos_mesh_kind or "custom"
+        notice("chaos", f"render({fault.name})", "milestone-3.x",
+               hint=f"in catalogue as {kind}; renderer not yet implemented")
+        return
+    ctx = RenderContext(namespace=plan.safety.namespace, experiment_id=plan.experiment_id)
+    crd = render_fault(fault, ctx)
+    typer.echo(yaml.safe_dump(crd, sort_keys=False))
 
 
 @app.command()
