@@ -70,14 +70,13 @@ class FixtureHypothesizer:
 class ClaudeHypothesizer:
     """Real LLM hypothesizer.
 
-    Wires claude-agent-sdk's ``query()`` with three MCP tools that read the
-    target's repo (sandboxed via TargetCodeReader). The model is instructed to
-    return a JSON array of Hypothesis objects; we parse and validate.
+    Wires three read-only tools (read_file, list_files, grep) backed by a
+    sandboxed TargetCodeReader, and runs a multi-turn tool-call completion via
+    the universal LiteLLM runner.
 
-    Runtime requirements:
-        - The ``claude`` CLI must be installed and authenticated.
-        - The host running this must have network access to the Anthropic API.
-        - Pass an explicit TargetCodeReader; we won't auto-resolve a repo path.
+    Default model is Anthropic's Claude. Pass any LiteLLM-supported model name
+    (e.g. ``ollama/qwen2.5-coder:14b``) to use a different provider; for Ollama,
+    also pass ``api_base="http://localhost:11434"``.
 
     Tests: don't invoke. Use FixtureHypothesizer.
     """
@@ -88,10 +87,12 @@ class ClaudeHypothesizer:
         model: str = "claude-opus-4-7",
         max_turns: int = 25,
         max_budget_usd: float = 3.0,
+        api_base: str | None = None,
     ) -> None:
         self.model = model
         self.max_turns = max_turns
         self.max_budget_usd = max_budget_usd
+        self.api_base = api_base
 
     async def generate(
         self,
@@ -105,43 +106,56 @@ class ClaudeHypothesizer:
                 "ClaudeHypothesizer needs a TargetCodeReader; pass code=... to the tester agent"
             )
 
-        # Imported here so non-LLM paths (tests, dry-run) don't pay the SDK import cost.
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ResultMessage,
-            TextBlock,
-            create_sdk_mcp_server,
-            query,
-            tool,
-        )
+        from agents._llm import LLMTool, complete_with_tools
 
-        # Define MCP tools that proxy our sandboxed code reader. The tool's
-        # input_schema is a Python type dict; the implementation returns the
-        # MCP-shaped result the SDK expects.
-        @tool("read_file", "Read a file from the target repo.", {"path": str})
-        async def _read_file(args: dict) -> dict:
-            content = code.read_file(args["path"])
-            return {"content": [{"type": "text", "text": content}]}
+        async def _read_file(args: dict) -> str:
+            return code.read_file(args["path"])
 
-        @tool("list_files", "List files matching a glob in the target repo.", {"glob": str})
-        async def _list_files(args: dict) -> dict:
-            paths = code.list_files(args["glob"])
-            return {"content": [{"type": "text", "text": "\n".join(paths)}]}
+        async def _list_files(args: dict) -> str:
+            return "\n".join(code.list_files(args["glob"]))
 
-        @tool(
-            "grep",
-            "Search for a regex pattern across files matching a glob. Returns 'path:line:text' rows.",
-            {"pattern": str, "glob": str},
-        )
-        async def _grep(args: dict) -> dict:
+        async def _grep(args: dict) -> str:
             hits = code.grep(args["pattern"], glob=args["glob"])
-            rows = "\n".join(f"{p}:{ln}:{txt}" for p, ln, txt in hits)
-            return {"content": [{"type": "text", "text": rows or "(no matches)"}]}
+            return "\n".join(f"{p}:{ln}:{txt}" for p, ln, txt in hits) or "(no matches)"
 
-        mcp = create_sdk_mcp_server(
-            "target_code", "1.0.0", [_read_file, _list_files, _grep]
-        )
+        tools = [
+            LLMTool(
+                name="read_file",
+                description="Read a file from the target repo.",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+                handler=_read_file,
+            ),
+            LLMTool(
+                name="list_files",
+                description="List files matching a glob in the target repo.",
+                parameters={
+                    "type": "object",
+                    "properties": {"glob": {"type": "string"}},
+                    "required": ["glob"],
+                },
+                handler=_list_files,
+            ),
+            LLMTool(
+                name="grep",
+                description=(
+                    "Regex search across files matching glob. "
+                    "Returns 'path:line:text' rows."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "glob": {"type": "string"},
+                    },
+                    "required": ["pattern", "glob"],
+                },
+                handler=_grep,
+            ),
+        ]
 
         system_prompt = (_PROMPT_DIR / "hypothesize.md").read_text(encoding="utf-8")
         user_prompt = (
@@ -152,32 +166,16 @@ class ClaudeHypothesizer:
             "Return ONLY the JSON array, no surrounding prose."
         )
 
-        options = ClaudeAgentOptions(
+        result = await complete_with_tools(
             model=self.model,
-            system_prompt=system_prompt,
-            mcp_servers={"target_code": mcp},
-            allowed_tools=[
-                "mcp__target_code__read_file",
-                "mcp__target_code__list_files",
-                "mcp__target_code__grep",
-            ],
+            system=system_prompt,
+            user=user_prompt,
+            tools=tools,
             max_turns=self.max_turns,
             max_budget_usd=self.max_budget_usd,
-            permission_mode="bypassPermissions",
+            api_base=self.api_base,
         )
-
-        final_text = ""
-        async for msg in query(prompt=user_prompt, options=options):
-            if isinstance(msg, AssistantMessage):
-                # Only consider the final assistant text; later messages overwrite.
-                text_parts = [b.text for b in msg.content if isinstance(b, TextBlock)]
-                if text_parts:
-                    final_text = "".join(text_parts)
-            elif isinstance(msg, ResultMessage):
-                # ResultMessage signals the run is done; nothing more to consume.
-                break
-
-        return _parse_hypotheses(final_text)
+        return _parse_hypotheses(result.final_text)
 
 
 # ---------------------------------------------------------------------------- #

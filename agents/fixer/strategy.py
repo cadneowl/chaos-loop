@@ -102,6 +102,7 @@ class ClaudeFixerStrategy:
         max_budget_usd: float = 5.0,
         code: TargetCodeReader | None = None,
         artifact_root: Path | None = None,
+        api_base: str | None = None,
     ) -> None:
         self.model = model
         self.max_turns = max_turns
@@ -111,6 +112,7 @@ class ClaudeFixerStrategy:
         # repo's experiments/runs/<exp>/proposed/ when None — set explicitly in
         # tests to avoid polluting the real runs dir.
         self._artifact_root = artifact_root
+        self.api_base = api_base
 
     async def propose(
         self, *, diagnosis: DiagnosisReport, intended_action: FixAction
@@ -125,82 +127,85 @@ class ClaudeFixerStrategy:
                 regression_test_added=False,
             )
 
-        # Imported lazily so test paths don't pay the SDK cost.
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ResultMessage,
-            TextBlock,
-            create_sdk_mcp_server,
-            query,
-            tool,
-        )
+        from agents._llm import LLMTool, complete_with_tools
 
         code = self._code  # capture for closures
 
-        @tool("read_file", "Read a file from the target repo.", {"path": str})
-        async def _read_file(args: dict) -> dict:
+        async def _read_file(args: dict) -> str:
             try:
-                return _text(code.read_file(args["path"]))
+                return code.read_file(args["path"])
             except CodeReadError as e:
-                return _err(f"read_file: {e}")
+                return f"error: read_file: {e}"
 
-        @tool("list_files", "List files matching a glob in the target repo.", {"glob": str})
-        async def _list_files(args: dict) -> dict:
+        async def _list_files(args: dict) -> str:
             try:
-                return _text("\n".join(code.list_files(args["glob"])))
+                return "\n".join(code.list_files(args["glob"]))
             except CodeReadError as e:
-                return _err(f"list_files: {e}")
+                return f"error: list_files: {e}"
 
-        @tool(
-            "grep",
-            "Regex search across files matching glob. Returns 'path:line:text' rows.",
-            {"pattern": str, "glob": str},
-        )
-        async def _grep(args: dict) -> dict:
+        async def _grep(args: dict) -> str:
             try:
                 hits = code.grep(args["pattern"], glob=args["glob"])
             except CodeReadError as e:
-                return _err(f"grep: {e}")
-            rows = "\n".join(f"{p}:{ln}:{txt}" for p, ln, txt in hits)
-            return _text(rows or "(no matches)")
+                return f"error: grep: {e}"
+            return "\n".join(f"{p}:{ln}:{txt}" for p, ln, txt in hits) or "(no matches)"
 
-        mcp = create_sdk_mcp_server(
-            "fixer_tools", "1.0.0", [_read_file, _list_files, _grep]
-        )
+        tools = [
+            LLMTool(
+                name="read_file",
+                description="Read a file from the target repo.",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+                handler=_read_file,
+            ),
+            LLMTool(
+                name="list_files",
+                description="List files matching a glob in the target repo.",
+                parameters={
+                    "type": "object",
+                    "properties": {"glob": {"type": "string"}},
+                    "required": ["glob"],
+                },
+                handler=_list_files,
+            ),
+            LLMTool(
+                name="grep",
+                description=(
+                    "Regex search across files matching glob. Returns 'path:line:text' rows."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "glob": {"type": "string"},
+                    },
+                    "required": ["pattern", "glob"],
+                },
+                handler=_grep,
+            ),
+        ]
 
         system_prompt = (Path(__file__).parent / "prompts" / "fix.md").read_text(encoding="utf-8")
         user_prompt = _build_user_prompt(diagnosis, intended_action)
 
-        options = ClaudeAgentOptions(
+        result = await complete_with_tools(
             model=self.model,
-            system_prompt=system_prompt,
-            mcp_servers={"fixer_tools": mcp},
-            allowed_tools=[
-                "mcp__fixer_tools__read_file",
-                "mcp__fixer_tools__list_files",
-                "mcp__fixer_tools__grep",
-            ],
+            system=system_prompt,
+            user=user_prompt,
+            tools=tools,
             max_turns=self.max_turns,
             max_budget_usd=self.max_budget_usd,
-            permission_mode="bypassPermissions",
+            api_base=self.api_base,
         )
-
-        final_text = ""
-        async for msg in query(prompt=user_prompt, options=options):
-            if isinstance(msg, AssistantMessage):
-                parts = [b.text for b in msg.content if isinstance(b, TextBlock)]
-                if parts:
-                    final_text = "".join(parts)
-            elif isinstance(msg, ResultMessage):
-                break
-
-        parsed = _parse_fix_proposal(final_text)
+        parsed = _parse_fix_proposal(result.final_text)
         if parsed is None:
             return FixerOutput(
                 reasoning=(
                     "ClaudeFixerStrategy: model output did not parse as a fix proposal. "
-                    f"Raw text length: {len(final_text)} chars."
+                    f"Raw text length: {len(result.final_text)} chars."
                 ),
                 files_touched=[],
                 regression_test_added=False,

@@ -107,10 +107,12 @@ class ClaudeDiagnoser:
         model: str = "claude-opus-4-7",
         max_turns: int = 30,
         max_budget_usd: float = 5.0,
+        api_base: str | None = None,
     ) -> None:
         self.model = model
         self.max_turns = max_turns
         self.max_budget_usd = max_budget_usd
+        self.api_base = api_base
 
     async def diagnose(
         self,
@@ -120,66 +122,40 @@ class ClaudeDiagnoser:
         prom: PromBackend | None = None,
         code: TargetCodeReader | None = None,
     ) -> list[RootCauseHypothesis]:
-        # Imported lazily so non-LLM paths (tests, dry-run) don't pay the SDK cost.
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ResultMessage,
-            TextBlock,
-            create_sdk_mcp_server,
-            query,
-            tool,
-        )
+        from agents._llm import LLMTool, complete_with_tools
 
         window_start, window_end = _chaos_window(request)
 
-        # Code-reading tools (mirror the hypothesizer's surface).
-        @tool("read_file", "Read a file from the target repo.", {"path": str})
-        async def _read_file(args: dict) -> dict:
+        # Code-reading tools — return error strings (not exceptions) when a
+        # backend is missing so the model can adapt across turns.
+        async def _read_file(args: dict) -> str:
             if code is None:
-                return _err("read_file: no TargetCodeReader configured for this diagnosis")
+                return "error: no TargetCodeReader configured for this diagnosis"
             try:
-                return _text(code.read_file(args["path"]))
+                return code.read_file(args["path"])
             except CodeReadError as e:
-                return _err(f"read_file: {e}")
+                return f"error: read_file: {e}"
 
-        @tool("list_files", "List files matching a glob in the target repo.", {"glob": str})
-        async def _list_files(args: dict) -> dict:
+        async def _list_files(args: dict) -> str:
             if code is None:
-                return _err("list_files: no TargetCodeReader configured")
+                return "error: no TargetCodeReader configured"
             try:
-                return _text("\n".join(code.list_files(args["glob"])))
+                return "\n".join(code.list_files(args["glob"]))
             except CodeReadError as e:
-                return _err(f"list_files: {e}")
+                return f"error: list_files: {e}"
 
-        @tool(
-            "grep",
-            "Regex search across files matching glob. Returns 'path:line:text' rows.",
-            {"pattern": str, "glob": str},
-        )
-        async def _grep(args: dict) -> dict:
+        async def _grep(args: dict) -> str:
             if code is None:
-                return _err("grep: no TargetCodeReader configured")
+                return "error: no TargetCodeReader configured"
             try:
                 hits = code.grep(args["pattern"], glob=args["glob"])
             except CodeReadError as e:
-                return _err(f"grep: {e}")
-            rows = "\n".join(f"{p}:{ln}:{txt}" for p, ln, txt in hits)
-            return _text(rows or "(no matches)")
+                return f"error: grep: {e}"
+            return "\n".join(f"{p}:{ln}:{txt}" for p, ln, txt in hits) or "(no matches)"
 
-        # Log / metric tools — bounded to the chaos window so the model can't
-        # accidentally pull hours of unrelated logs.
-        @tool(
-            "query_loki",
-            (
-                "LogQL query within the experiment's chaos window. "
-                "Returns lines newline-separated. Limit defaults to 200."
-            ),
-            {"logql": str, "limit": int},
-        )
-        async def _query_loki(args: dict) -> dict:
+        async def _query_loki(args: dict) -> str:
             if loki is None:
-                return _err("query_loki: no LokiBackend configured")
+                return "error: no LokiBackend configured"
             try:
                 lines = await loki.query_range(
                     args["logql"],
@@ -188,76 +164,100 @@ class ClaudeDiagnoser:
                     limit=int(args.get("limit", 200)),
                 )
             except LokiQueryError as e:
-                return _err(f"query_loki: {e}")
-            return _text("\n".join(f"{ln.timestamp_ns}: {ln.line}" for ln in lines) or "(no lines)")
+                return f"error: query_loki: {e}"
+            return "\n".join(f"{ln.timestamp_ns}: {ln.line}" for ln in lines) or "(no lines)"
 
-        @tool(
-            "query_prometheus",
-            "PromQL instant query at the end of the chaos window.",
-            {"promql": str},
-        )
-        async def _query_prom(args: dict) -> dict:
+        async def _query_prom(args: dict) -> str:
             if prom is None:
-                return _err("query_prometheus: no PromBackend configured")
+                return "error: no PromBackend configured"
             try:
                 samples = await prom.query_instant(args["promql"], ts=window_end)
             except PromQueryError as e:
-                return _err(f"query_prometheus: {e}")
-            return _text(
-                "\n".join(f"{s.value} {s.labels}" for s in samples) or "(no samples)"
-            )
+                return f"error: query_prometheus: {e}"
+            return "\n".join(f"{s.value} {s.labels}" for s in samples) or "(no samples)"
 
-        mcp = create_sdk_mcp_server(
-            "diagnostician_tools",
-            "1.0.0",
-            [_read_file, _list_files, _grep, _query_loki, _query_prom],
-        )
+        tools = [
+            LLMTool(
+                name="read_file",
+                description="Read a file from the target repo.",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+                handler=_read_file,
+            ),
+            LLMTool(
+                name="list_files",
+                description="List files matching a glob in the target repo.",
+                parameters={
+                    "type": "object",
+                    "properties": {"glob": {"type": "string"}},
+                    "required": ["glob"],
+                },
+                handler=_list_files,
+            ),
+            LLMTool(
+                name="grep",
+                description=(
+                    "Regex search across files matching glob. Returns 'path:line:text' rows."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "glob": {"type": "string"},
+                    },
+                    "required": ["pattern", "glob"],
+                },
+                handler=_grep,
+            ),
+            LLMTool(
+                name="query_loki",
+                description=(
+                    "LogQL query within the experiment's chaos window. "
+                    "Returns lines newline-separated. Limit defaults to 200."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "logql": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["logql"],
+                },
+                handler=_query_loki,
+            ),
+            LLMTool(
+                name="query_prometheus",
+                description="PromQL instant query at the end of the chaos window.",
+                parameters={
+                    "type": "object",
+                    "properties": {"promql": {"type": "string"}},
+                    "required": ["promql"],
+                },
+                handler=_query_prom,
+            ),
+        ]
 
         system_prompt = (_PROMPT_DIR / "diagnose.md").read_text(encoding="utf-8")
         user_prompt = _build_user_prompt(request, window_start, window_end)
 
-        tool_names = [
-            "mcp__diagnostician_tools__read_file",
-            "mcp__diagnostician_tools__list_files",
-            "mcp__diagnostician_tools__grep",
-            "mcp__diagnostician_tools__query_loki",
-            "mcp__diagnostician_tools__query_prometheus",
-        ]
-        options = ClaudeAgentOptions(
+        result = await complete_with_tools(
             model=self.model,
-            system_prompt=system_prompt,
-            mcp_servers={"diagnostician_tools": mcp},
-            allowed_tools=tool_names,
+            system=system_prompt,
+            user=user_prompt,
+            tools=tools,
             max_turns=self.max_turns,
             max_budget_usd=self.max_budget_usd,
-            permission_mode="bypassPermissions",
+            api_base=self.api_base,
         )
-
-        final_text = ""
-        async for msg in query(prompt=user_prompt, options=options):
-            if isinstance(msg, AssistantMessage):
-                parts = [b.text for b in msg.content if isinstance(b, TextBlock)]
-                if parts:
-                    final_text = "".join(parts)
-            elif isinstance(msg, ResultMessage):
-                break
-
-        return _parse_hypotheses(final_text)
+        return _parse_hypotheses(result.final_text)
 
 
 # ---------------------------------------------------------------------------- #
 # Helpers                                                                      #
 # ---------------------------------------------------------------------------- #
-
-
-def _text(s: str) -> dict:
-    """MCP-shaped success result."""
-    return {"content": [{"type": "text", "text": s}]}
-
-
-def _err(msg: str) -> dict:
-    """MCP-shaped error result. Marking is_error lets the model see it as a tool failure."""
-    return {"content": [{"type": "text", "text": msg}], "is_error": True}
 
 
 def _chaos_window(request: DiagnosisRequest) -> tuple[float, float]:

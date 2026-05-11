@@ -8,7 +8,10 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "kosta" }]
 
 dependencies = [
-    # Agent SDK
+    # Multi-backend LLM client (Anthropic, Ollama, OpenAI, etc.). Strategies use this.
+    "litellm>=1.83",
+    # Kept for back-compat / alternate path; can be removed once we've fully
+    # migrated and verified equivalence.
     "claude-agent-sdk>=0.1.0",
     # Contracts
     "pydantic>=2.6",
