@@ -136,8 +136,9 @@ def test_diagnosis_request_requires_a_failed_report() -> None:
         )
 
 
-def test_claude_diagnoser_stub_raises() -> None:
-    """The real LLM-backed diagnoser is M5.x; for now invoking it must fail loudly."""
+def test_claude_diagnoser_is_constructible_without_invoking() -> None:
+    """M5.x: ClaudeDiagnoser is real. Constructing it must NOT call the LLM —
+    tests + dry-run wire it up cheaply and only pay tokens at diagnose() time."""
     diagnoser = ClaudeDiagnoser()
-    with pytest.raises(NotImplementedError):
-        asyncio.run(diagnoser.diagnose(request=_req()))
+    assert diagnoser.model == "claude-opus-4-7"
+    # The actual diagnose() call requires the claude CLI + API; not exercised here.
