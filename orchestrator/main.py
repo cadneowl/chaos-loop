@@ -51,21 +51,40 @@ def _store(db: Path | None) -> ExperimentStore:
 @app.command()
 def run(
     plan_path: Path = typer.Argument(..., exists=True, readable=True),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Use mock agents."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Use mock agents (no external deps)."),
     db: Path | None = typer.Option(None, "--db", help="SQLite path."),
+    prom_url: str | None = typer.Option(None, "--prom-url", envvar="PROM_URL"),
+    loki_url: str | None = typer.Option(None, "--loki-url", envvar="LOKI_URL"),
+    target_repo_path: str | None = typer.Option(
+        None, "--target-repo-path", envvar="TARGET_REPO_PATH"
+    ),
 ) -> None:
-    """Execute one experiment from YAML."""
+    """Execute one experiment from YAML.
+
+    --dry-run uses mock agents. Without it, real agents are constructed from
+    env / flags. The LLM-driven strategies (diagnoser, fixer) are stubs that
+    will raise NotImplementedError until M5.x / M6.x; the loop will fail with
+    a clear message at that point.
+    """
     plan = _load_plan(plan_path)
     store = _store(db)
 
     if dry_run:
         from agents._mocks import build_mock_agents
 
-        agents = build_mock_agents()
+        agent_dict = build_mock_agents()
+        agents = Agents(**agent_dict)
     else:
-        raise typer.BadParameter("real agent wiring lands in milestone 2+ — use --dry-run for now")
+        from agents._factory import AgentConfig, build_real_agents
 
-    runner = ExperimentRunner(agents=Agents(**agents), store=store)
+        cfg = AgentConfig(
+            prom_url=prom_url,
+            loki_url=loki_url,
+            target_repo_path=target_repo_path,
+        )
+        agents = build_real_agents(cfg)
+
+    runner = ExperimentRunner(agents=agents, store=store)
     record = asyncio.run(runner.run(plan))
     console.print_json(json.dumps(record.model_dump(mode="json")))
 
