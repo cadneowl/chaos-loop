@@ -24,6 +24,27 @@ from shared.contracts import Hypothesis
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
 
+def _build_system_prompt() -> str:
+    """Read the hypothesize prompt + append the live catalogue of valid fault names.
+
+    Building it at call-time means the prompt is always in sync with the catalogue;
+    new faults show up automatically without prompt edits.
+    """
+    from agents.chaos.faults._meta import CATALOGUE
+
+    base = (_PROMPT_DIR / "hypothesize.md").read_text(encoding="utf-8")
+    lines = ["", "## Catalogue of valid `proposed_fault` values", ""]
+    for name in sorted(CATALOGUE):
+        f = CATALOGUE[name]
+        approval = " (requires approval)" if f.requires_approval else ""
+        lines.append(f"- `{name}`{approval} — {f.description}")
+    lines.append("")
+    lines.append(
+        "**Any `proposed_fault` not in this list will be silently dropped from the report.**"
+    )
+    return base + "\n" + "\n".join(lines)
+
+
 class Hypothesizer(Protocol):
     """Generates code-grounded chaos hypotheses for a target."""
 
@@ -157,12 +178,12 @@ class ClaudeHypothesizer:
             ),
         ]
 
-        system_prompt = (_PROMPT_DIR / "hypothesize.md").read_text(encoding="utf-8")
+        system_prompt = _build_system_prompt()
         user_prompt = (
             f"target_app: {target_app}\n"
             f"target_repo: {target_repo or '(not specified)'}\n\n"
-            "Read the codebase via your tools and produce a JSON array of "
-            "Hypothesis objects matching the schema in your system prompt. "
+            "Use your tools to read the actual code, then produce a JSON array "
+            "of Hypothesis objects matching the schema in your system prompt. "
             "Return ONLY the JSON array, no surrounding prose."
         )
 
