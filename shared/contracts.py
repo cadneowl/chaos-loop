@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------- identifiers --------------------------------------------------------
 
@@ -331,15 +331,14 @@ class DiagnosisRequest(BaseModel):
     chaos_timeline: ChaosTimeline
     target_repo: str | None = None
 
-    @field_validator("failed_security_report")
-    @classmethod
-    def _at_least_one_failure(
-        cls, v: SecurityReport | None, info: Any
-    ) -> SecurityReport | None:
-        tester = info.data.get("failed_tester_report")
-        if v is None and tester is None:
+    @model_validator(mode="after")
+    def _at_least_one_failure(self) -> DiagnosisRequest:
+        # Pydantic v2 doesn't run field_validators on default values, so a
+        # cross-field invariant like "at least one of A or B must be set" has
+        # to live on the model, not on either field.
+        if self.failed_tester_report is None and self.failed_security_report is None:
             raise ValueError("DiagnosisRequest needs at least one failed report")
-        return v
+        return self
 
 
 class RootCauseHypothesis(BaseModel):
