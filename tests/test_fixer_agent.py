@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from agents.fixer.agent import ClaudeFixerAgent
 from agents.fixer.strategy import (
     ClaudeFixerStrategy,
@@ -205,12 +203,16 @@ def test_proposal_is_always_draft(tmp_path: Path) -> None:
     assert _run(agent_code, diag).is_draft is True
 
 
-def test_claude_strategy_stub_raises() -> None:
-    strategy = ClaudeFixerStrategy()
-    with pytest.raises(NotImplementedError):
-        asyncio.run(
-            strategy.propose(
-                diagnosis=_diagnosis(_hyp()),
-                intended_action=FixAction.CODE_PATCH,
-            )
+def test_claude_strategy_without_code_returns_explanation() -> None:
+    """M6.x: ClaudeFixerStrategy is real. Without a TargetCodeReader it can't
+    introspect the repo, so it returns an explanatory FixerOutput rather than
+    crashing or calling the LLM."""
+    strategy = ClaudeFixerStrategy()  # no code= passed
+    out = asyncio.run(
+        strategy.propose(
+            diagnosis=_diagnosis(_hyp()),
+            intended_action=FixAction.CODE_PATCH,
         )
+    )
+    assert out.files_touched == []
+    assert "no TargetCodeReader" in out.reasoning
