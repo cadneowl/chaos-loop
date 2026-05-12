@@ -14,6 +14,7 @@ patterns the rules don't cover).
 """
 
 from agents.tester.detectors._base import Detector, Issue, hypothesis_id, slug
+from agents.tester.detectors.async_blocking import SyncCallInAsyncDetector
 from agents.tester.detectors.k8s import (
     HardPodAffinityDetector,
     SingleReplicaDetector,
@@ -22,6 +23,10 @@ from agents.tester.detectors.network import (
     MissingRetryDetector,
     MissingTimeoutDetector,
 )
+from agents.tester.detectors.resilience import (
+    MissingCircuitBreakerDetector,
+    NoFallbackForCacheDetector,
+)
 from agents.tester.detectors.secrets import HardcodedSecretDetector
 
 __all__ = [
@@ -29,9 +34,12 @@ __all__ = [
     "HardPodAffinityDetector",
     "HardcodedSecretDetector",
     "Issue",
+    "MissingCircuitBreakerDetector",
     "MissingRetryDetector",
     "MissingTimeoutDetector",
+    "NoFallbackForCacheDetector",
     "SingleReplicaDetector",
+    "SyncCallInAsyncDetector",
     "default_detectors",
     "hypothesis_id",
     "slug",
@@ -43,6 +51,9 @@ def default_detectors() -> list[Detector]:
     return [
         MissingTimeoutDetector(),
         MissingRetryDetector(),
+        MissingCircuitBreakerDetector(),
+        NoFallbackForCacheDetector(),
+        SyncCallInAsyncDetector(),
         SingleReplicaDetector(),
         HardPodAffinityDetector(),
         HardcodedSecretDetector(),

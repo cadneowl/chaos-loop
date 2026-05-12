@@ -3,6 +3,36 @@
 > **Alias:** the "Tester" agent from the original proposition.
 > **Role:** establish a statistical baseline of healthy behavior, verify that the same probes still pass after chaos, and generate hypotheses by reading the target's source code.
 
+## Current implementations
+
+The hypothesize step has four implementations behind one Protocol — pick via `--profile` on `chaos run`:
+
+| Implementation | What it does | Cost | File |
+|---|---|---|---|
+| `FixtureHypothesizer` | returns a predetermined list (tests + dry-run) | $0 | `agents/tester/hypothesizer.py` |
+| `StaticHypothesizer` | runs pattern-match detectors over the target's code | **$0** | `agents/tester/hypothesizer.py` + `agents/tester/detectors/` |
+| `HybridHypothesizer` | Static (always) + LLM (augmenting); falls back to Static on failure | $$ | `agents/tester/hypothesizer.py` |
+| `ClaudeHypothesizer` | LiteLLM-backed; calls a model (Claude / Ollama / OpenAI) with MCP-style tools that read code | $$$ | `agents/tester/hypothesizer.py` |
+
+Baseline and verify are pure Python (no LLM — they just run probes against Prometheus and compute `StatisticalSample` distributions). See `ClaudeTesterAgent.baseline()` and `verify()`.
+
+### Static detectors (no LLM)
+
+`agents/tester/detectors/` contains the deterministic pattern-match floor. Each detector emits `Issue` objects that get templated into `Hypothesis` instances with the right catalogue-mapped fault.
+
+| Detector | Pattern | Maps to |
+|---|---|---|
+| `MissingTimeoutDetector` | http / subprocess calls without `timeout=` | `network.delay` |
+| `MissingRetryDetector` | external-dep calls in a file with no retry primitive | `network.loss` |
+| `MissingCircuitBreakerDetector` | external-dep call sites in a file with no circuit-breaker primitive (pybreaker / circuitbreaker / aiobreaker / hyx) | `network.partition` |
+| `NoFallbackForCacheDetector` | cache GET-shaped calls (redis / valkey / memcache / aiocache) in a file that imports a cache and has no `try/except` | `pod.kill` |
+| `SyncCallInAsyncDetector` | known-sync blocking calls (`time.sleep` / `requests.*` / sync subprocess / socket) inside an `async def` body, not offloaded via `to_thread` / `run_in_executor` | `network.delay` |
+| `SingleReplicaDetector` | k8s Deployments with `replicas: 1` | `pod.kill` |
+| `HardPodAffinityDetector` | `requiredDuringSchedulingIgnoredDuringExecution` | `pod.kill` |
+| `HardcodedSecretDetector` | secret-suggestive names assigned to long string literals (skips env-loaded patterns + comments) | `secret.rotate` |
+
+Add a detector: implement the `Detector` Protocol (one `find(code) -> list[Issue]` method), add a template entry to `_DETECTOR_CONFIG` in `hypothesizer.py`, register in `default_detectors()`.
+
 ## 1. Mission
 
 The tester is the **first** and **last** agent in every loop iteration. Without it, there is no baseline to regress from and no verdict to act on.

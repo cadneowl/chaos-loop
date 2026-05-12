@@ -12,14 +12,17 @@ against the fault catalogue so a hallucinated fault name doesn't propagate.
 
 from __future__ import annotations
 
-import json
-import re
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol
 
+from agents._json import parse_json_list
 from agents.diagnostician.tools.code_reader import TargetCodeReader
+from agents.tester.detectors._base import Issue
 from shared.contracts import Hypothesis
+
+_log = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -168,6 +171,72 @@ _DETECTOR_CONFIG: dict[str, dict] = {
             "After pod.kill, the pod is rescheduled within the expected window",
         ],
     },
+    "missing-circuit-breaker": {
+        "fault": "network.partition",
+        "confidence": 0.65,
+        "statement": (
+            "{file}:{line} calls {detail} but the file has no circuit-breaker "
+            "primitive — sustained dep failure will cascade."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} matches an external-dep "
+            "call and the file references no circuit-breaker library "
+            "(pybreaker / circuitbreaker / aiobreaker / hyx) and no @circuit "
+            "decorator. Under sustained outage (network.partition), every "
+            "call will time out against the gone dep until the caller's "
+            "thread / connection pool exhausts."
+        ),
+        "success_criteria": [
+            "Under network.partition, the caller's request latency stays "
+            "bounded (breaker opens, calls fail fast) rather than queueing",
+            "Caller does not exhaust its thread / connection pool during the "
+            "fault window",
+        ],
+    },
+    "no-fallback-for-cache": {
+        "fault": "pod.kill",
+        "confidence": 0.55,
+        "statement": (
+            "{file}:{line} reads from cache ({detail}) but the file has no "
+            "try/except — a cache outage will raise to the caller instead "
+            "of falling through to source-of-truth."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} matches a cache GET-shaped "
+            "call (redis / valkey / memcached / aiocache / generic .cache) and "
+            "the file contains no try/except block. Under pod.kill of the "
+            "cache pod, the caller will propagate the connection error rather "
+            "than degrade gracefully to the underlying datastore."
+        ),
+        "success_criteria": [
+            "Under pod.kill of the cache, the caller falls through to source-"
+            "of-truth and the user-visible request still succeeds (possibly "
+            "slower)",
+            "No 5xx is returned solely because the cache is unavailable",
+        ],
+    },
+    "sync-call-in-async": {
+        "fault": "network.delay",
+        "confidence": 0.7,
+        "statement": (
+            "{file}:{line} calls sync {detail} inside an async function — "
+            "the event loop will block for the entire call duration."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} sits inside an `async "
+            "def` body and matches a known-sync blocking call "
+            "(time.sleep / requests.* / sync subprocess / socket recv) with "
+            "no await, to_thread, or run_in_executor offload. Under "
+            "network.delay against the dep, every other coroutine on the "
+            "loop stalls for the delay duration."
+        ),
+        "success_criteria": [
+            "Under network.delay, unrelated coroutines on the same event "
+            "loop are not stalled by the delayed call",
+            "p95 latency of unrelated endpoints stays within baseline + "
+            "10% during the chaos window",
+        ],
+    },
     "hardcoded-secret": {
         "fault": "secret.rotate",
         "confidence": 0.4,
@@ -227,7 +296,7 @@ class StaticHypothesizer:
         return out
 
 
-def _issue_to_hypothesis(detector_name: str, issue, cfg: dict) -> Hypothesis:
+def _issue_to_hypothesis(detector_name: str, issue: Issue, cfg: dict) -> Hypothesis:
     from agents.tester.detectors._base import hypothesis_id
 
     fmt_args = {
@@ -250,11 +319,6 @@ def _issue_to_hypothesis(detector_name: str, issue, cfg: dict) -> Hypothesis:
 # ---------------------------------------------------------------------------- #
 # Hybrid (Static + optional LLM)                                               #
 # ---------------------------------------------------------------------------- #
-
-
-import logging  # noqa: E402 — import here keeps the LLM section above clean
-
-_log = logging.getLogger(__name__)
 
 
 class HybridHypothesizer:
@@ -339,8 +403,19 @@ def _are_duplicates(x: Hypothesis, y: Hypothesis) -> bool:
 
 
 def _normalize_ref(ref: str) -> str:
-    """Compare references like 'src/x.py:42-55' and 'src/x.py:42' as the same file."""
-    return ref.replace("\\", "/").split(":", 1)[0]
+    """Normalize a ``file:line`` reference for dedup.
+
+    We keep the line component (or line-range, normalized to the start line) so
+    two findings at different sites in the same file stay distinct. Path
+    separators are unified to forward slashes.
+    """
+    ref = ref.replace("\\", "/")
+    if ":" not in ref:
+        return ref
+    path, _, tail = ref.partition(":")
+    # Strip line ranges to just the start line (``42-55`` -> ``42``).
+    start_line = tail.split("-", 1)[0]
+    return f"{path}:{start_line}"
 
 
 # ---------------------------------------------------------------------------- #
@@ -382,10 +457,15 @@ class ClaudeHypothesizer:
         target_repo: str | None,
         code: TargetCodeReader | None,
     ) -> list[Hypothesis]:
+        # No code reader -> nothing to read -> nothing to hypothesize about.
+        # Mirrors StaticHypothesizer's behavior so the Hypothesizer Protocol
+        # is consistent across implementations.
         if code is None:
-            raise ValueError(
-                "ClaudeHypothesizer needs a TargetCodeReader; pass code=... to the tester agent"
+            _log.warning(
+                "ClaudeHypothesizer.generate called without a TargetCodeReader; "
+                "returning [] (set TARGET_REPO_PATH or pass code= to enable)"
             )
+            return []
 
         from agents._llm import LLMTool, complete_with_tools
 
@@ -467,54 +547,13 @@ class ClaudeHypothesizer:
 def _parse_hypotheses(text: str) -> list[Hypothesis]:
     """Pull a JSON array of Hypothesis objects from the model's final text.
 
-    Robust to: surrounding prose, code-fence wrappers (```json ... ```), and
-    object-vs-array forms (we wrap a single dict in a list).
-
     Validation: each item is run through ``Hypothesis.model_validate``; items
     that don't validate are dropped (not the whole batch).
     """
-    if not text.strip():
-        return []
-
-    raw = _extract_json_blob(text)
-    if raw is None:
-        return []
-
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-
-    if isinstance(payload, dict):
-        payload = [payload]
-    if not isinstance(payload, list):
-        return []
-
     out: list[Hypothesis] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
+    for item in parse_json_list(text):
         try:
             out.append(Hypothesis.model_validate(item))
         except Exception:
             continue
     return out
-
-
-def _extract_json_blob(text: str) -> str | None:
-    """Find the JSON array (or object) in `text`. Strips ```json fences if present.
-
-    For non-fenced inputs we take whichever of '[' or '{' appears first — taking
-    just one would mis-fire on an object whose body contains an inner '['
-    (e.g., a "success_criteria" array inside a Hypothesis object).
-    """
-    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fence:
-        return fence.group(1).strip()
-    indices = [(text.find(ch), ch) for ch in "[{"]
-    valid = [(i, ch) for i, ch in indices if i != -1]
-    if not valid:
-        return None
-    valid.sort()  # earliest position wins
-    start = valid[0][0]
-    return text[start:].strip()

@@ -23,7 +23,7 @@ from typing import Literal
 
 from agents._harness import Harness
 from agents.chaos.agent import ClaudeChaosAgent
-from agents.chaos.cluster import ClusterIO
+from agents.chaos.cluster import ClusterIO, KubernetesClusterIO
 from agents.diagnostician.agent import ClaudeDiagnosticianAgent
 from agents.diagnostician.diagnoser import (
     ClaudeDiagnoser,
@@ -74,6 +74,7 @@ class AgentConfig:
     loki_url: str | None = None
     target_repo_path: str | None = None
     kubeconfig: str | None = None
+    kube_context: str | None = None
     # LLM tuning — used when profile is 'hybrid' or 'llm'.
     model: str = "claude-opus-4-7"
     api_base: str | None = None
@@ -85,6 +86,7 @@ class AgentConfig:
             loki_url=os.environ.get("LOKI_URL"),
             target_repo_path=os.environ.get("TARGET_REPO_PATH"),
             kubeconfig=os.environ.get("KUBECONFIG"),
+            kube_context=os.environ.get("KUBE_CONTEXT"),
             model=os.environ.get("CHAOS_LLM_MODEL", "claude-opus-4-7"),
             api_base=os.environ.get("CHAOS_LLM_API_BASE"),
         )
@@ -147,8 +149,16 @@ def build_real_agents(
         code=code,
     )
 
-    # Chaos needs a cluster backend (M3.c lands the real one). Override-only for now.
-    chaos = ClaudeChaosAgent(cluster=cluster, kubeconfig=cfg.kubeconfig)
+    # Chaos cluster backend: prefer explicit override, else build the real
+    # KubernetesClusterIO from kubeconfig / context. With nothing configured,
+    # leave cluster=None and the chaos agent will refuse to execute (the
+    # orchestrator surfaces a clear error rather than silently no-oping).
+    chaos_cluster: ClusterIO | None = cluster
+    if chaos_cluster is None and (cfg.kubeconfig or cfg.kube_context):
+        chaos_cluster = KubernetesClusterIO(
+            kubeconfig=cfg.kubeconfig, context=cfg.kube_context
+        )
+    chaos = ClaudeChaosAgent(cluster=chaos_cluster, kubeconfig=cfg.kubeconfig)
 
     # Security uses SubprocessRunner by default — Trivy on PATH.
     security = ClaudeSecurityAgent(runner=scanner_runner or SubprocessRunner())
@@ -175,11 +185,11 @@ def build_real_agents(
     # orchestrator can't tell them apart.
     if harness is not None:
         return Agents(
-            tester=harness.instrument("tester", tester),  # type: ignore[arg-type]
-            chaos=harness.instrument("chaos", chaos),  # type: ignore[arg-type]
-            security=harness.instrument("security", security),  # type: ignore[arg-type]
-            diagnostician=harness.instrument("diagnostician", diagnostician),  # type: ignore[arg-type]
-            fixer=harness.instrument("fixer", fixer),  # type: ignore[arg-type]
+            tester=harness.instrument("tester", tester),
+            chaos=harness.instrument("chaos", chaos),
+            security=harness.instrument("security", security),
+            diagnostician=harness.instrument("diagnostician", diagnostician),
+            fixer=harness.instrument("fixer", fixer),
         )
 
     return Agents(

@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 from agents.diagnostician.tools.code_reader import TargetCodeReader
+from agents.tester.detectors._base import EXTERNAL_DEP_CALL as _EXTERNAL_DEP_CALL
 from agents.tester.detectors._base import Issue
 
 # --------------------------------------------------------------------------- #
@@ -68,9 +69,6 @@ class MissingTimeoutDetector:
 # --------------------------------------------------------------------------- #
 
 
-_EXTERNAL_DEP_CALL = re.compile(
-    r"\b(?:redis|httpx|requests|aiohttp|psycopg2?|asyncpg|kafka|boto3|gcloud)\."
-)
 # Patterns whose presence ANYWHERE in the file means "retry / resilience is
 # already considered" — we suppress findings in those files.
 _RETRY_HINTS = re.compile(

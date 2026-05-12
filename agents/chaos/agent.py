@@ -144,6 +144,12 @@ class ClaudeChaosAgent:
                 error=repr(e),
             )
 
+    async def get_namespace_annotations(self, namespace: str) -> dict[str, str] | None:
+        """Delegate to the cluster backend. Returns None when no backend is wired."""
+        if self._cluster is None:
+            return None
+        return await self._cluster.get_namespace_annotations(namespace)
+
     async def cleanup(self, plan: ExperimentPlan) -> None:
         """Delete every Chaos Mesh resource labeled with this experiment_id.
 
@@ -218,20 +224,6 @@ def render(
     ctx = RenderContext(namespace=plan.safety.namespace, experiment_id=plan.experiment_id)
     crd = render_fault(fault, ctx)
     typer.echo(yaml.safe_dump(crd, sort_keys=False))
-
-
-@app.command()
-def inject(plan_path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
-    """Apply one plan's faults out-of-band of the orchestrator. Debug only."""
-    notice("chaos", "inject", "milestone-3.0",
-           hint="bypasses orchestrator safety gates — only use against --dry-run targets")
-
-
-@app.command()
-def cleanup(namespace: str = typer.Option("otel-demo", "--namespace")) -> None:
-    """Delete every Chaos Mesh CRD in a namespace."""
-    notice("chaos", "cleanup", "milestone-3.4",
-           hint=f"would clean Chaos Mesh CRDs in namespace={namespace!r}")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,23 @@
 
 > **Role:** take a `DiagnosisReport`, decide whether to act, and produce a **draft** PR with the proposed fix + a regression test (or a docs-only output for `working-as-intended` cases). Never auto-merges.
 
+## Current implementations
+
+Four variants behind one `FixerStrategy` Protocol (`agents/fixer/strategy.py`):
+
+| Implementation | How it works | Cost |
+|---|---|---|
+| `FixtureFixerStrategy` | predetermined `FixerOutput` (or async callback); tests + dry-run | $0 |
+| `StaticFixerStrategy` | per-fix-class templates emit a structured proposal (reasoning + files_touched + sketched regression-test path); doesn't actually edit files | **$0** |
+| `HybridFixerStrategy` | tries LLM first; falls back to Static if LLM raises or returns empty | $$ |
+| `ClaudeFixerStrategy` | LiteLLM-backed; reads target code via MCP tools; emits a JSON proposal; writes an artifact to `experiments/runs/<exp>/proposed/edits.json` | $$$ |
+
+The fixer **agent** (`ClaudeFixerAgent` in `agent.py`) is independent of the strategy — it owns the deterministic decision tree (low-confidence → NONE; working-as-intended → DOC_ONLY directly; otherwise → delegate to strategy) and the path-denylist enforcement that always runs after the strategy. A strategy that proposes denylisted paths gets its proposal turned into `action=NONE` with the violation in the reasoning.
+
+### What "Static" means here
+
+The static templates describe **what to change and why**, not **the exact diff**. They cover 10 fix classes (`missing-retry`, `missing-timeout`, `missing-circuit-breaker`, `missing-fallback`, `auth-control-gap`, `secret-handling`, `image-policy`, `config-change`, `test-gap`, `code-patch`). Each output is a structured work item a human reviewer can act on — useful for triage and for handing off to a human or LLM to actually write the diff. Real file edits + `gh pr create` is M6.x.b, not yet implemented.
+
 ## 1. Mission
 
 The fixer is the **only agent that writes to a real codebase**. Every guardrail in this design hardens that fact:

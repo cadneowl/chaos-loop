@@ -12,9 +12,12 @@ from agents.tester.detectors import (
     HardcodedSecretDetector,
     HardPodAffinityDetector,
     Issue,
+    MissingCircuitBreakerDetector,
     MissingRetryDetector,
     MissingTimeoutDetector,
+    NoFallbackForCacheDetector,
     SingleReplicaDetector,
+    SyncCallInAsyncDetector,
     default_detectors,
     hypothesis_id,
     slug,
@@ -59,6 +62,9 @@ def test_default_detector_set_has_expected_members() -> None:
     assert {
         "missing-timeout",
         "missing-retry",
+        "missing-circuit-breaker",
+        "no-fallback-for-cache",
+        "sync-call-in-async",
         "single-replica",
         "hard-pod-affinity",
         "hardcoded-secret",
@@ -162,6 +168,241 @@ def test_missing_retry_one_finding_per_file(tmp_path: Path) -> None:
     })
     issues = MissingRetryDetector().find(code)
     assert len(issues) == 1
+
+
+# --------------------------------------------------------------------------- #
+# MissingCircuitBreakerDetector                                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_circuit_breaker_flags_external_call_with_no_breaker(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import httpx\n\n"
+            "def call(): return httpx.get('https://api')\n"
+        ),
+    })
+    issues = MissingCircuitBreakerDetector().find(code)
+    assert len(issues) == 1
+    assert issues[0].line == 3
+
+
+def test_circuit_breaker_skips_file_that_uses_pybreaker(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import httpx\nimport pybreaker\n"
+            "breaker = pybreaker.CircuitBreaker()\n"
+            "def call(): return httpx.get('x')\n"
+        ),
+    })
+    assert MissingCircuitBreakerDetector().find(code) == []
+
+
+def test_circuit_breaker_skips_file_with_circuit_decorator(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import httpx\nfrom circuitbreaker import circuit\n"
+            "@circuit\ndef call(): return httpx.get('x')\n"
+        ),
+    })
+    assert MissingCircuitBreakerDetector().find(code) == []
+
+
+def test_circuit_breaker_one_finding_per_file(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import httpx\n"
+            "def a(): return httpx.get('x')\n"
+            "def b(): return httpx.post('y')\n"
+        ),
+    })
+    assert len(MissingCircuitBreakerDetector().find(code)) == 1
+
+
+def test_circuit_breaker_ignores_import_and_comment_lines(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "from httpx import AsyncClient\n"
+            "# httpx.get is normally fine\n"
+        ),
+    })
+    assert MissingCircuitBreakerDetector().find(code) == []
+
+
+# --------------------------------------------------------------------------- #
+# NoFallbackForCacheDetector                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_no_fallback_flags_redis_get_without_try(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/profile.py": (
+            "import redis\n"
+            "r = redis.Redis()\n"
+            "def get(uid): return r.get(f'u:{uid}')\n"
+        ),
+    })
+    issues = NoFallbackForCacheDetector().find(code)
+    assert len(issues) == 1
+    assert ".get(" in issues[0].detail
+
+
+def test_no_fallback_skips_file_with_try_block(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/profile.py": (
+            "import redis\n"
+            "r = redis.Redis()\n"
+            "def get(uid):\n"
+            "    try:\n"
+            "        return r.get(f'u:{uid}')\n"
+            "    except Exception:\n"
+            "        return None\n"
+        ),
+    })
+    assert NoFallbackForCacheDetector().find(code) == []
+
+
+def test_no_fallback_flags_memcache_call(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/cart.py": (
+            "import memcache\n"
+            "mc = memcache.Client(['127.0.0.1:11211'])\n"
+            "def get(k): return mc.get(k)\n"
+        ),
+    })
+    issues = NoFallbackForCacheDetector().find(code)
+    assert len(issues) == 1
+
+
+def test_no_fallback_flags_valkey_call(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/cart.py": (
+            "import valkey\n"
+            "c = valkey.Valkey()\n"
+            "def get(k): return c.get(k)\n"
+        ),
+    })
+    issues = NoFallbackForCacheDetector().find(code)
+    assert len(issues) == 1
+
+
+def test_no_fallback_ignores_non_cache_get(tmp_path: Path) -> None:
+    """``requests.get`` is a network call, not a cache GET — don't fire."""
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import requests\n"
+            "def call(): return requests.get('https://api')\n"
+        ),
+    })
+    assert NoFallbackForCacheDetector().find(code) == []
+
+
+# --------------------------------------------------------------------------- #
+# SyncCallInAsyncDetector                                                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_sync_in_async_flags_time_sleep_in_async_def(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import time\n\n"
+            "async def handler():\n"
+            "    time.sleep(1)\n"
+            "    return 'ok'\n"
+        ),
+    })
+    issues = SyncCallInAsyncDetector().find(code)
+    assert len(issues) == 1
+    assert issues[0].line == 4
+    assert "time.sleep" in issues[0].detail
+
+
+def test_sync_in_async_flags_requests_in_async_def(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import requests\n\n"
+            "async def fetch():\n"
+            "    return requests.get('https://api')\n"
+        ),
+    })
+    issues = SyncCallInAsyncDetector().find(code)
+    assert len(issues) == 1
+
+
+def test_sync_in_async_skips_calls_in_sync_def(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import time\n\n"
+            "def handler():\n"
+            "    time.sleep(1)\n"
+        ),
+    })
+    assert SyncCallInAsyncDetector().find(code) == []
+
+
+def test_sync_in_async_skips_call_offloaded_to_thread(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import asyncio\nimport requests\n\n"
+            "async def fetch():\n"
+            "    return await asyncio.to_thread(requests.get, 'https://api')\n"
+        ),
+    })
+    assert SyncCallInAsyncDetector().find(code) == []
+
+
+def test_sync_in_async_skips_run_in_executor(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import asyncio\nimport time\n\n"
+            "async def wait():\n"
+            "    loop = asyncio.get_running_loop()\n"
+            "    await loop.run_in_executor(None, time.sleep, 1)\n"
+        ),
+    })
+    assert SyncCallInAsyncDetector().find(code) == []
+
+
+def test_sync_in_async_scope_ends_at_next_def(tmp_path: Path) -> None:
+    """A sync call in a sibling sync def AFTER an async def shouldn't fire."""
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import time\n\n"
+            "async def a():\n"
+            "    return 1\n"
+            "\n"
+            "def b():\n"
+            "    time.sleep(1)\n"
+        ),
+    })
+    assert SyncCallInAsyncDetector().find(code) == []
+
+
+def test_sync_in_async_flags_call_in_nested_block(tmp_path: Path) -> None:
+    """Deeper indent than async def → still inside its body."""
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import time\n\n"
+            "async def handler(n):\n"
+            "    for _ in range(n):\n"
+            "        time.sleep(0.1)\n"
+        ),
+    })
+    issues = SyncCallInAsyncDetector().find(code)
+    assert len(issues) == 1
+    assert issues[0].line == 5
+
+
+def test_sync_in_async_skips_comment_line(tmp_path: Path) -> None:
+    code = _make_repo(tmp_path, {
+        "src/svc.py": (
+            "import time\n\n"
+            "async def handler():\n"
+            "    # time.sleep(1) — left for reference\n"
+            "    return 'ok'\n"
+        ),
+    })
+    assert SyncCallInAsyncDetector().find(code) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -354,6 +595,9 @@ def test_static_hypothesizer_with_custom_detectors(tmp_path: Path) -> None:
     [
         (MissingTimeoutDetector, "network.delay"),
         (MissingRetryDetector, "network.loss"),
+        (MissingCircuitBreakerDetector, "network.partition"),
+        (NoFallbackForCacheDetector, "pod.kill"),
+        (SyncCallInAsyncDetector, "network.delay"),
         (SingleReplicaDetector, "pod.kill"),
         (HardPodAffinityDetector, "pod.kill"),
         (HardcodedSecretDetector, "secret.rotate"),

@@ -3,6 +3,21 @@
 > **Aliases:** "Debugger" (from the proposition), "diagnostician" (in the SCE literature), "RCA agent."
 > **Role:** when post-chaos verification fails, take the failed reports + chaos timeline + observability data + target source code, and produce a ranked list of root-cause hypotheses with evidence.
 
+## Current implementations
+
+Four variants behind one `Diagnoser` Protocol (`agents/diagnostician/diagnoser.py`):
+
+| Implementation | How it works | Cost |
+|---|---|---|
+| `FixtureDiagnoser` | predetermined hypotheses (or async callback); tests + dry-run | $0 |
+| `StaticDiagnoser` | maps chaos `FaultCategory` to candidate `(fix_class, confidence)` entries via a lookup table; boosts confidence based on symptom keywords in failed reports | **$0** |
+| `HybridDiagnoser` | Static (always) + LLM (augmenting); merges on `(fix_class, affected_paths)`, higher confidence wins; falls back to Static on LLM failure | $$ |
+| `ClaudeDiagnoser` | LiteLLM-backed; the model gets MCP-style tools for Loki / Prometheus / code reading bounded to the chaos window, returns ranked hypotheses | $$$ |
+
+### What Static can and can't do
+
+It can route a `network.loss` fault to `missing-retry` / `missing-timeout` / `missing-fallback` candidates and rank them by confidence based on symptom keywords (`"p95 latency"` boosts `missing-timeout`, `"5xx"` boosts `missing-retry`, etc.). It can't do real cross-evidence reasoning — that's LLM territory. The point of Hybrid is to give the loop a $0 floor while letting the LLM contribute when it's available.
+
 ## 1. Mission
 
 The diagnostician is the **cognitive heart** of the loop. Tester and security tell us *what* broke; chaos tells us *what we did*; the diagnostician tells us *why* — and only the diagnostician.

@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
 from agents.diagnostician.tools.code_reader import TargetCodeReader
+
+# Shared by MissingRetryDetector and MissingCircuitBreakerDetector. The trailing
+# ``\s*\(`` is what makes this a CALL site rather than a type reference:
+# ``httpx.TransportError`` (no paren) does not match; ``httpx.get(...)`` and
+# ``redis.Redis(...)`` (instantiation) both do.
+EXTERNAL_DEP_CALL = re.compile(
+    r"\b(?:redis|httpx|requests|aiohttp|psycopg2?|asyncpg|kafka|boto3|gcloud|grpc)"
+    r"\.\w+\s*\("
+)
 
 
 @dataclass(frozen=True)
