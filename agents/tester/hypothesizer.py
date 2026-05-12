@@ -84,6 +84,170 @@ class FixtureHypothesizer:
 
 
 # ---------------------------------------------------------------------------- #
+# Static (pattern-match detectors, no LLM)                                     #
+# ---------------------------------------------------------------------------- #
+
+
+# Each detector maps to a catalogue fault, base confidence, and templates that
+# turn its Issues into Hypothesis objects. Kept here (not on the detector) so
+# detectors stay focused on pattern-matching and the hypothesis "voice" lives
+# in one place.
+_DETECTOR_CONFIG: dict[str, dict] = {
+    "missing-timeout": {
+        "fault": "network.delay",
+        "confidence": 0.7,
+        "statement": (
+            "{file}:{line} calls {detail} with no timeout — under network "
+            "latency it will block indefinitely."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} matches an http or "
+            "subprocess call without a `timeout=` kwarg. Under chaos that "
+            "delays this dependency, the caller's hot path will hang."
+        ),
+        "success_criteria": [
+            "Under network.delay, the call returns within a bounded time "
+            "(rejected as timeout) rather than blocking",
+            "Caller's request latency does not exceed (call_timeout + chaos_delay)",
+        ],
+    },
+    "missing-retry": {
+        "fault": "network.loss",
+        "confidence": 0.6,
+        "statement": (
+            "{file}:{line} calls {detail} but the file has no retry / "
+            "backoff primitive in scope."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} matches an external-dep "
+            "call (Redis / HTTP / DB / queue / cloud SDK) and no retry, "
+            "tenacity, backoff, or attempt-loop is referenced anywhere in "
+            "the same file. Under transient packet loss, the call will fail "
+            "fast on first attempt."
+        ),
+        "success_criteria": [
+            "Under network.loss, the operation either succeeds (after "
+            "internal retry) or fails with a clear error within bounded time",
+            "Caller does not propagate a single transient failure as a "
+            "user-visible 5xx",
+        ],
+    },
+    "single-replica": {
+        "fault": "pod.kill",
+        "confidence": 0.85,
+        "statement": (
+            "{file}:{line} declares a Deployment with replicas: 1 — killing "
+            "the single pod creates downtime."
+        ),
+        "rationale": (
+            "Detected by static scan: {file} contains kind: Deployment and "
+            "{file}:{line} sets replicas: 1. A single-replica Deployment "
+            "cannot survive a pod kill without downtime."
+        ),
+        "success_criteria": [
+            "After pod.kill, service is restored within the Deployment's "
+            "configured restart window",
+            "No request returns 5xx during the gap (or the fragility is "
+            "documented as expected)",
+        ],
+    },
+    "hard-pod-affinity": {
+        "fault": "pod.kill",
+        "confidence": 0.5,
+        "statement": (
+            "{file}:{line} uses requiredDuringSchedulingIgnoredDuringExecution"
+            " — the pod can be pinned to a single node."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} declares a hard "
+            "(required) affinity / anti-affinity rule. If only one node "
+            "matches, killing the pod prevents reschedule until that node "
+            "is healthy again."
+        ),
+        "success_criteria": [
+            "After pod.kill, the pod is rescheduled within the expected window",
+        ],
+    },
+    "hardcoded-secret": {
+        "fault": "secret.rotate",
+        "confidence": 0.4,
+        "statement": (
+            "{file}:{line} appears to assign a hardcoded secret literal."
+        ),
+        "rationale": (
+            "Detected by static scan: {file}:{line} matches a "
+            "secret-suggestive name (KEY/SECRET/TOKEN/PASSWORD) assigned "
+            "to a string literal, with no env-loading helper on the same "
+            "line. Heuristic; review for false positives. Match: {detail}."
+        ),
+        "success_criteria": [
+            "Secret material is loaded from env / vault / config, not "
+            "hardcoded in source",
+            "Secret rotation does not require a code change + redeploy",
+        ],
+    },
+}
+
+
+class StaticHypothesizer:
+    """Pure-Python hypothesizer driven by pattern-match detectors.
+
+    Zero LLM cost, deterministic output, ~80% coverage of the common chaos
+    targets. Use as a baseline; combine with ClaudeHypothesizer via
+    HybridHypothesizer when the budget allows.
+    """
+
+    def __init__(
+        self,
+        detectors: list | None = None,  # avoid circular Detector type ref
+    ) -> None:
+        # Lazy import — keeps the test path light when only Fixture is used.
+        from agents.tester.detectors import default_detectors
+
+        self._detectors = detectors if detectors is not None else default_detectors()
+
+    async def generate(
+        self,
+        *,
+        target_app: str,
+        target_repo: str | None,
+        code: TargetCodeReader | None,
+    ) -> list[Hypothesis]:
+        if code is None:
+            return []
+        out: list[Hypothesis] = []
+        for det in self._detectors:
+            cfg = _DETECTOR_CONFIG.get(det.name)
+            if cfg is None:
+                # Detector with no template — skip rather than synthesize a
+                # half-baked hypothesis.
+                continue
+            for issue in det.find(code):
+                out.append(_issue_to_hypothesis(det.name, issue, cfg))
+        return out
+
+
+def _issue_to_hypothesis(detector_name: str, issue, cfg: dict) -> Hypothesis:
+    from agents.tester.detectors._base import hypothesis_id
+
+    fmt_args = {
+        "file": issue.file.replace("\\", "/"),
+        "line": issue.line,
+        "snippet": issue.snippet,
+        "detail": issue.detail,
+    }
+    return Hypothesis(
+        id=hypothesis_id(detector_name, issue),
+        statement=cfg["statement"].format(**fmt_args),
+        rationale=cfg["rationale"].format(**fmt_args),
+        proposed_fault=cfg["fault"],
+        success_criteria=list(cfg["success_criteria"]),
+        confidence=cfg["confidence"],
+        code_references=[f"{fmt_args['file']}:{issue.line}"],
+    )
+
+
+# ---------------------------------------------------------------------------- #
 # Claude-backed implementation                                                 #
 # ---------------------------------------------------------------------------- #
 

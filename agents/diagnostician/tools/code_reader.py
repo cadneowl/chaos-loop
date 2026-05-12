@@ -20,16 +20,66 @@ class CodeReadError(RuntimeError):
     """Raised when a file read is blocked by sandbox policy or the file doesn't exist."""
 
 
-class TargetCodeReader:
-    """Read-only access to files under a target repo root."""
+# Path-segment names we never want to scan or read. If any segment of a file's
+# relative path matches one of these (case-sensitively on segment, not on the
+# full path), the file is treated as if it doesn't exist.
+DEFAULT_IGNORE_SEGMENTS: frozenset[str] = frozenset({
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    "node_modules",
+    ".cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".tox",
+    "dist",
+    "build",
+    "site-packages",
+    ".idea",
+    ".vscode",
+    ".next",
+    ".nuxt",
+    "target",  # rust/maven build output
+    # Test directories — full of intentional bad patterns (mocks, fixtures with
+    # secret-shaped strings, etc.) that look like fragilities but aren't.
+    "tests",
+    "test",
+    "__tests__",
+    "spec",
+})
 
-    def __init__(self, root: Path) -> None:
+
+class TargetCodeReader:
+    """Read-only access to files under a target repo root.
+
+    Files whose relative path contains any segment in ``ignore_segments`` are
+    invisible to ``list_files``, ``grep``, and ``read_file`` — that's how we
+    keep ``.venv`` and friends out of detector output without every detector
+    needing its own ignore logic.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        ignore_segments: frozenset[str] | None = None,
+    ) -> None:
         if not root.exists():
             raise CodeReadError(f"target root does not exist: {root}")
         if not root.is_dir():
             raise CodeReadError(f"target root is not a directory: {root}")
         # Resolve symlinks so the root we check against is stable.
         self.root = root.resolve()
+        self.ignore_segments = ignore_segments if ignore_segments is not None else DEFAULT_IGNORE_SEGMENTS
+
+    def _is_ignored(self, relative_path: str) -> bool:
+        """True if any segment of `relative_path` matches an ignore pattern."""
+        # Normalize separators for cross-platform check.
+        norm = relative_path.replace("\\", "/")
+        return any(seg in self.ignore_segments for seg in norm.split("/"))
 
     def _resolve_within_root(self, relative: str) -> Path:
         """Resolve a caller-supplied path; raise if it escapes root."""
@@ -54,8 +104,11 @@ class TargetCodeReader:
 
         Files larger than 1 MB are rejected unless a line range is provided —
         the diagnostician should ask for a specific window, not slurp a whole
-        file.
+        file. Files whose path matches an ignored segment are treated as if
+        they don't exist (consistent with list_files / grep).
         """
+        if self._is_ignored(relative):
+            raise CodeReadError(f"file is in an ignored path: {relative}")
         path = self._resolve_within_root(relative)
         if not path.exists():
             raise CodeReadError(f"file not found: {relative}")
@@ -79,14 +132,25 @@ class TargetCodeReader:
         return "".join(lines[ls - 1 : le])
 
     def list_files(self, glob: str = "**/*") -> list[str]:
-        """List files matching a glob, returned as paths relative to root."""
-        # Glob is interpreted from root; results are relative.
-        return sorted(
-            str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file()
-        )
+        """List files matching a glob, returned as paths relative to root.
+
+        Paths containing any ignored segment (e.g. ``.venv``) are filtered out.
+        """
+        out: list[str] = []
+        for p in self.root.glob(glob):
+            if not p.is_file():
+                continue
+            rel = str(p.relative_to(self.root))
+            if self._is_ignored(rel):
+                continue
+            out.append(rel)
+        return sorted(out)
 
     def grep(self, pattern: str, *, glob: str = "**/*") -> list[tuple[str, int, str]]:
-        """Search for `pattern` in files matching `glob`. Returns (path, lineno, line)."""
+        """Search for `pattern` in files matching `glob`. Returns (path, lineno, line).
+
+        Paths containing any ignored segment are skipped.
+        """
         try:
             regex = re.compile(pattern)
         except re.error as e:
@@ -95,11 +159,14 @@ class TargetCodeReader:
         for path in self.root.glob(glob):
             if not path.is_file():
                 continue
+            rel = str(path.relative_to(self.root))
+            if self._is_ignored(rel):
+                continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             for i, line in enumerate(text.splitlines(), start=1):
                 if regex.search(line):
-                    results.append((str(path.relative_to(self.root)), i, line))
+                    results.append((rel, i, line))
         return results

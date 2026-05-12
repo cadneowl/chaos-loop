@@ -116,13 +116,42 @@ def test_code_reader_missing_file(fake_repo: Path) -> None:
 
 
 def test_code_reader_list_files(fake_repo: Path) -> None:
-    cr = TargetCodeReader(fake_repo)
+    cr = TargetCodeReader(fake_repo, ignore_segments=frozenset())
     listed = cr.list_files("**/*.py")
     # Path separators differ by OS; normalize for assertion.
     paths = {p.replace("\\", "/") for p in listed}
     assert "src/main.py" in paths
     assert "src/redis_client.py" in paths
     assert "tests/test_main.py" in paths
+
+
+def test_code_reader_default_ignore_segments_skip_tests_and_venv(
+    fake_repo: Path, tmp_path: Path
+) -> None:
+    """Default reader hides tests/, .venv/, __pycache__/, etc."""
+    # The fixture has tests/test_main.py — should be hidden by default.
+    (fake_repo / ".venv").mkdir()
+    (fake_repo / ".venv" / "junk.py").write_text("x = 1\n")
+    (fake_repo / "src" / "__pycache__").mkdir()
+    (fake_repo / "src" / "__pycache__" / "main.cpython-313.pyc").write_text("\x00")
+
+    cr = TargetCodeReader(fake_repo)  # default ignores
+    paths = {p.replace("\\", "/") for p in cr.list_files("**/*.py")}
+    assert "src/main.py" in paths
+    assert "tests/test_main.py" not in paths
+    assert ".venv/junk.py" not in paths
+
+
+def test_code_reader_read_file_respects_ignore(fake_repo: Path) -> None:
+    cr = TargetCodeReader(fake_repo)  # default ignores tests/
+    with pytest.raises(CodeReadError, match="ignored"):
+        cr.read_file("tests/test_main.py")
+
+
+def test_code_reader_grep_respects_ignore(fake_repo: Path) -> None:
+    cr = TargetCodeReader(fake_repo)  # default ignores tests/
+    hits = cr.grep("test_hello")  # text only in tests/test_main.py
+    assert hits == []
 
 
 def test_code_reader_grep(fake_repo: Path) -> None:
