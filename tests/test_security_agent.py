@@ -135,3 +135,179 @@ def test_verify_runs_same_scanners() -> None:
     )
     assert report.request_kind == "verify"
     assert len(report.findings) == 2
+
+
+# ---------------------------------------------------------------------------- #
+# M4.1 scanner orchestration                                                   #
+# ---------------------------------------------------------------------------- #
+
+from agents.security.agent import SecurityScanConfig  # noqa: E402
+
+_SYFT_BASELINE = {
+    "packages": [
+        {"name": "openssl", "versionInfo": "1.1.1k"},
+        {"name": "nginx", "versionInfo": "1.27.0"},
+    ]
+}
+_SYFT_DRIFTED = {
+    "packages": [
+        {"name": "openssl", "versionInfo": "1.1.1k"},
+        {"name": "nginx", "versionInfo": "1.27.0"},
+        {"name": "curl", "versionInfo": "8.0"},  # NEW package — drift signal
+    ]
+}
+
+
+def test_only_trivy_runs_by_default() -> None:
+    """Default config keeps the dependency surface minimal."""
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    asyncio.run(_agent_with(runner).baseline(_req("x:latest")))
+    scanners = {c[0] for c in runner.calls}
+    assert scanners == {"trivy"}
+
+
+def test_enabling_syft_records_baseline_sbom_digest() -> None:
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    runner.register("syft", stdout=json.dumps(_SYFT_BASELINE))
+
+    config = SecurityScanConfig(enable_trivy=True, enable_syft=True)
+    agent = ClaudeSecurityAgent(runner=runner, config=config)
+    report = asyncio.run(agent.baseline(_req("x:latest")))
+
+    assert report.sbom_digest is not None
+    assert report.sbom_digest.startswith("sha256:")
+    assert report.sbom_drift_from_baseline is False
+
+
+def test_drift_detection_flips_when_sbom_changes() -> None:
+    """baseline -> verify with a different SBOM should set drift=True."""
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    # First scan emits the baseline SBOM; second emits the drifted one.
+    # FixtureRunner returns the most-recent registration for "syft", so we
+    # do baseline -> register-new -> verify.
+    runner.register("syft", stdout=json.dumps(_SYFT_BASELINE))
+    config = SecurityScanConfig(enable_trivy=True, enable_syft=True)
+    agent = ClaudeSecurityAgent(runner=runner, config=config)
+
+    req = SecurityRequest(
+        kind="baseline",
+        experiment_id="exp-bbbbbbbbbbbb",
+        target_app="otel-demo",
+        target_images=["x:latest"],
+    )
+    baseline_report = asyncio.run(agent.baseline(req))
+    assert baseline_report.sbom_drift_from_baseline is False
+
+    # New package appears between baseline and verify (e.g., the chaos run
+    # caused a deploy with an extra dep). Re-register syft's reply.
+    runner.register("syft", stdout=json.dumps(_SYFT_DRIFTED))
+
+    verify_report = asyncio.run(agent.verify(
+        SecurityRequest(
+            kind="verify",
+            experiment_id=req.experiment_id,
+            target_app="otel-demo",
+            target_images=["x:latest"],
+        )
+    ))
+    assert verify_report.sbom_drift_from_baseline is True
+    # Digest should be different between baseline and verify.
+    assert verify_report.sbom_digest != baseline_report.sbom_digest
+
+
+def test_drift_not_flipped_when_sbom_unchanged() -> None:
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    runner.register("syft", stdout=json.dumps(_SYFT_BASELINE))
+    config = SecurityScanConfig(enable_trivy=True, enable_syft=True)
+    agent = ClaudeSecurityAgent(runner=runner, config=config)
+
+    req = SecurityRequest(
+        kind="baseline",
+        experiment_id="exp-cccccccccccc",
+        target_app="otel-demo",
+        target_images=["x:latest"],
+    )
+    asyncio.run(agent.baseline(req))
+    verify_report = asyncio.run(agent.verify(
+        SecurityRequest(
+            kind="verify",
+            experiment_id=req.experiment_id,
+            target_app="otel-demo",
+            target_images=["x:latest"],
+        )
+    ))
+    assert verify_report.sbom_drift_from_baseline is False
+
+
+def test_gitleaks_only_runs_when_target_repo_set() -> None:
+    """gitleaks needs a repo path; with none, it must not fire."""
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    runner.register("gitleaks", stdout="[]")
+    config = SecurityScanConfig(enable_trivy=True, enable_gitleaks=True)
+    agent = ClaudeSecurityAgent(runner=runner, config=config)
+
+    # No target_repo on the request -> gitleaks must not be invoked.
+    req_no_repo = SecurityRequest(
+        kind="baseline",
+        experiment_id="exp-dddddddddddd",
+        target_app="otel-demo",
+        target_images=["x:latest"],
+    )
+    asyncio.run(agent.baseline(req_no_repo))
+    assert not any(c[0] == "gitleaks" for c in runner.calls)
+
+    # With target_repo set, gitleaks fires.
+    req_with_repo = SecurityRequest(
+        kind="baseline",
+        experiment_id="exp-eeeeeeeeeeee",
+        target_app="otel-demo",
+        target_repo="/path/to/repo",
+        target_images=["x:latest"],
+    )
+    asyncio.run(agent.baseline(req_with_repo))
+    assert any(c[0] == "gitleaks" for c in runner.calls)
+
+
+def test_cosign_runs_when_enabled_with_key() -> None:
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    runner.register("cosign", returncode=0)
+    config = SecurityScanConfig(
+        enable_trivy=True,
+        enable_cosign=True,
+        cosign_public_key="/keys/pub.pem",
+    )
+    agent = ClaudeSecurityAgent(runner=runner, config=config)
+    asyncio.run(agent.baseline(_req("x:latest")))
+    assert any(c[0] == "cosign" for c in runner.calls)
+
+
+def test_kubescape_runs_when_enabled() -> None:
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_NO_VULNS))
+    runner.register("kubescape", stdout=json.dumps({"summaryDetails": {"controls": {}}}))
+    config = SecurityScanConfig(enable_trivy=True, enable_kubescape=True)
+    agent = ClaudeSecurityAgent(runner=runner, config=config)
+    asyncio.run(agent.baseline(_req("x:latest")))
+    assert any(c[0] == "kubescape" for c in runner.calls)
+
+
+def test_skip_on_scanner_error_isolates_failed_scanner() -> None:
+    """A failing Grype must not prevent other scanners' results from landing."""
+    runner = FixtureRunner()
+    runner.register("trivy", stdout=json.dumps(_TRIVY_TWO_VULNS))
+    runner.register("grype", stdout="garbage-not-json")  # parse error -> ScannerError
+    config = SecurityScanConfig(
+        enable_trivy=True,
+        enable_grype=True,
+    )
+    agent = ClaudeSecurityAgent(runner=runner, config=config, skip_on_scanner_error=True)
+    report = asyncio.run(agent.baseline(_req("x:latest")))
+    # Trivy's 2 findings survive; grype contributed 0.
+    assert len(report.findings) == 2
+    assert all(f.scanner == "trivy" for f in report.findings)

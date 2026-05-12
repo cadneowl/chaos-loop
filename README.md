@@ -1,6 +1,6 @@
 # chaos — closed-loop, security-aware chaos engineering
 
-[![Tests](https://img.shields.io/badge/tests-411%20passing-brightgreen)](#test-status)
+[![Tests](https://img.shields.io/badge/tests-458%20passing-brightgreen)](#test-status)
 [![mypy](https://img.shields.io/badge/mypy-strict-blue)](#test-status)
 [![ruff](https://img.shields.io/badge/ruff-clean-blue)](#test-status)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
@@ -65,11 +65,11 @@ can't*.
 | Orchestrator + state machine | working |
 | Tester (baseline, verify, hypothesize) | working — Static + Hybrid + LLM strategies |
 | Chaos (renderers + KubernetesClusterIO) | working — validated against live Chaos Mesh v2.7+ |
-| Security (Trivy) | working; M4.1 adds Syft / Grype / gitleaks / cosign / kubescape |
+| Security (Trivy + Syft + Grype + gitleaks + cosign + kubescape) | working — opt-in per scanner; SBOM drift detection live |
 | Diagnostician | working — Static + Hybrid + LLM strategies |
 | Fixer (proposal artifacts) | working; actual file edits + `gh pr create` is M6.x.b |
 | LLM backends | Anthropic Claude (default), Ollama (local), any LiteLLM provider |
-| Tests | 411 unit tests, 81%+ coverage, mypy strict, ruff clean |
+| Tests | 458 unit tests, 81%+ coverage, mypy strict, ruff clean |
 
 ---
 
@@ -532,7 +532,7 @@ non-trivial invocations (e.g., WSL-from-Windows). See `--help` on each.
 
 ```bash
 $ python -m pytest tests/ -q
-411 passed, 1 skipped in 2.55s
+458 passed, 1 skipped in 2.55s
 
 $ python -m mypy agents/ shared/ orchestrator/
 Success: no issues found in 61 source files

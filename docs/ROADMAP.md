@@ -32,9 +32,11 @@
 
 ## Milestone 4 — security baseline
 
-- [ ] Wrappers for Syft, Grype, Trivy, gitleaks, kubescape, cosign
-- [ ] SecurityReport produced for OTel demo baseline
-- [ ] One security hypothesis generated from the SBOM
+- [x] Wrappers for Syft, Grype, Trivy, gitleaks, kubescape, cosign (M4.1)
+- [x] SecurityReport produced for image baselines (M4.2)
+- [x] SBOM drift detection across baseline -> verify (M4.1)
+- [ ] Image discovery from a namespace (M4.3 — currently `--image` repeatable)
+- [ ] One security hypothesis generated from the SBOM (M4.5 — SecurityHypothesizer)
 
 ## Milestone 5 — diagnostician
 
