@@ -1,0 +1,26 @@
+version: 2
+
+# A chaos / security tool that doesn't keep its own dependencies current is
+# leading by counter-example. Weekly is enough — daily PR floods drive people
+# to ignore the bot.
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    groups:
+      # Group dev tooling so we don't get five separate PRs every week.
+      dev-tooling:
+        patterns: ["ruff", "mypy", "pytest*", "types-*", "pre-commit"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "github-actions"]

@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+# Cancel in-progress runs on the same branch when a new push arrives — saves
+# CI minutes and surfaces only the latest commit's status.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-type-test:
+    name: ruff · mypy · pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor we declare in pyproject.toml; 3.13 is the dev box.
+        # Both must pass — if a 3.13-only feature sneaks in, 3.11 catches it.
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: mypy strict
+        run: mypy agents/ shared/ orchestrator/
+
+      - name: pytest
+        run: pytest tests/ -q --cov=agents --cov=shared --cov=orchestrator --cov-report=term
+
+      # Smoke-test the CLI surface so a broken typer wiring trips CI rather
+      # than the user. Cheap, no external deps.
+      - name: chaos --help
+        run: chaos --help
+
+      - name: chaos list-faults
+        run: chaos list-faults
