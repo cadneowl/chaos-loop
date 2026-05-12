@@ -62,3 +62,42 @@ jobs:
 
       - name: chaos list-faults
         run: chaos list-faults
+
+  ui:
+    name: ui — server + web · build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    # The UI lives in `ui/` as a pnpm workspace. We only run when files
+    # there or in this workflow itself change; the Python-only matrix
+    # above carries the rest of CI.
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: pnpm install (workspace)
+        run: pnpm install --frozen-lockfile
+
+      - name: server — build
+        run: pnpm --filter @chaos/ui-server build
+
+      - name: server — test
+        run: pnpm --filter @chaos/ui-server test
+
+      - name: web — test
+        run: pnpm --filter @chaos/ui-web test
+
+      - name: web — build
+        run: pnpm --filter @chaos/ui-web build

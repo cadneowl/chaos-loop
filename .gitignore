@@ -44,3 +44,15 @@ secrets/
 .coverage
 .coverage.*
 htmlcov/
+
+# UI workspace
+ui/**/node_modules/
+ui/**/dist/
+ui/**/coverage/
+ui/**/.angular/
+ui/**/.nx/
+ui/**/*.tsbuildinfo
+ui/**/npm-debug.log*
+ui/**/yarn-debug.log*
+ui/**/yarn-error.log*
+ui/**/pnpm-debug.log*
