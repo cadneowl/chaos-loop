@@ -209,8 +209,15 @@ def gh_status() -> None:
     if shutil.which("gh") is None:
         typer.echo("gh CLI not found on PATH", err=True)
         raise typer.Exit(1)
-    rc = subprocess.run(["gh", "auth", "status"], check=False).returncode
-    raise typer.Exit(rc)
+    try:
+        # 5s is plenty: gh auth status is a local credential check, no network.
+        result = subprocess.run(
+            ["gh", "auth", "status"], check=False, timeout=5
+        )
+    except subprocess.TimeoutExpired:
+        typer.echo("gh auth status timed out after 5s", err=True)
+        raise typer.Exit(1) from None
+    raise typer.Exit(result.returncode)
 
 
 if __name__ == "__main__":

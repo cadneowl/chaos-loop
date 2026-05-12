@@ -24,6 +24,12 @@ from typing import Protocol
 
 import httpx
 
+from agents._retry import async_retry
+
+# Transient HTTP errors worth retrying. 4xx body errors are NOT in here — those
+# are caller-side bugs we don't want to mask.
+_RETRYABLE_HTTPX = (httpx.TransportError, httpx.TimeoutException)
+
 
 class PromQueryError(RuntimeError):
     """Raised when a Prometheus query fails to execute or returns a non-success status."""
@@ -111,11 +117,16 @@ class HttpxPromBackend:
 
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         url = self.base_url + path
-        if self._client is not None:
-            resp = await self._client.get(url, params=params, timeout=self.timeout)
-        else:
+
+        async def _do_request() -> httpx.Response:
+            if self._client is not None:
+                return await self._client.get(url, params=params, timeout=self.timeout)
             async with httpx.AsyncClient(timeout=self.timeout) as c:
-                resp = await c.get(url, params=params)
+                return await c.get(url, params=params)
+
+        # Retry on transport / timeout errors. Non-transient errors (e.g.,
+        # 4xx body decoded later) bubble up untouched.
+        resp = await async_retry(_do_request, max_attempts=3, retry_on=_RETRYABLE_HTTPX)
         if resp.status_code != 200:
             raise PromQueryError(f"Prometheus HTTP {resp.status_code}: {resp.text[:200]}")
         payload = resp.json()
