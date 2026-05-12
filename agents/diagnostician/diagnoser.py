@@ -79,6 +79,259 @@ class FixtureDiagnoser:
 
 
 # ---------------------------------------------------------------------------- #
+# Static (rule-based, no LLM)                                                  #
+# ---------------------------------------------------------------------------- #
+
+
+# Map a chaos fault category to candidate (fix_class, base_confidence,
+# summary_template) entries. The diagnoser emits one RootCauseHypothesis per
+# (fault_in_timeline, candidate) pair, then ranks by confidence after symptom
+# adjustments.
+#
+# These are coarse heuristics — they ENCODE that "network.loss usually points
+# at missing-retry, but could also be missing-timeout or missing-fallback".
+# Real RCA needs an LLM (or a human); the static rules give a sensible default
+# floor and free the LLM to spend tokens on harder cases.
+from shared.contracts import FaultCategory  # noqa: E402 — keep import local to the rule table
+
+_FAULT_TO_FIX_RULES: dict[FaultCategory, list[tuple[str, float, str]]] = {
+    FaultCategory.NETWORK: [
+        ("missing-retry", 0.55,
+         "Network fault on {selector}: dependency call likely lacks retry/backoff"),
+        ("missing-timeout", 0.45,
+         "Network fault on {selector}: call may block beyond a sensible bound"),
+        ("missing-fallback", 0.35,
+         "Network fault on {selector}: no graceful-degradation path observed"),
+    ],
+    FaultCategory.POD: [
+        ("missing-fallback", 0.45,
+         "Pod fault on {selector}: caller has no failover path while pod restarts"),
+        ("working-as-intended", 0.30,
+         "Pod fault on {selector}: may be expected if Deployment is single-replica by design"),
+    ],
+    FaultCategory.STRESS: [
+        ("missing-timeout", 0.45,
+         "Resource pressure on {selector}: hot-path call may have unbounded wait"),
+        ("config-change", 0.30,
+         "Resource limits on {selector} may need adjustment"),
+    ],
+    FaultCategory.CERT: [
+        ("secret-handling", 0.60,
+         "Cert fault on {selector}: cert lifecycle / OCSP handling appears fragile"),
+    ],
+    FaultCategory.TLS: [
+        ("auth-control-gap", 0.55,
+         "TLS fault on {selector}: protocol downgrade may be silently accepted"),
+    ],
+    FaultCategory.AUTH: [
+        ("auth-control-gap", 0.65,
+         "Auth fault on {selector}: control may fail open instead of closed"),
+    ],
+    FaultCategory.SECRET: [
+        ("secret-handling", 0.65,
+         "Secret rotation on {selector}: runtime did not pick up the new value"),
+    ],
+    FaultCategory.IMAGE: [
+        ("image-policy", 0.70,
+         "Image swap on {selector}: admission policy may be missing or permissive"),
+    ],
+    FaultCategory.IAM: [
+        ("auth-control-gap", 0.55,
+         "IAM degradation on {selector}: surfaced a policy gap"),
+    ],
+    FaultCategory.NETPOL: [
+        ("config-change", 0.55,
+         "NetworkPolicy regression on {selector}: app-layer enforcement absent"),
+    ],
+    FaultCategory.DNS: [
+        ("missing-retry", 0.45,
+         "DNS error from {selector}: resolver lacks fallback / retry"),
+        ("missing-timeout", 0.40,
+         "DNS error from {selector}: resolver call may be unbounded"),
+    ],
+    FaultCategory.IO: [
+        ("missing-timeout", 0.45,
+         "I/O latency on {selector}: filesystem call may be unbounded"),
+    ],
+    FaultCategory.HTTP: [
+        ("missing-retry", 0.45,
+         "HTTP fault on {selector}: no retry on transient 5xx"),
+        ("missing-fallback", 0.30,
+         "HTTP fault on {selector}: no degraded path"),
+    ],
+    FaultCategory.TIME: [
+        ("config-change", 0.35,
+         "Time skew on {selector}: clock-dependent logic flagged"),
+    ],
+    FaultCategory.KERNEL: [
+        ("config-change", 0.30,
+         "Kernel fault on {selector}: usually requires infra-side fix"),
+    ],
+    FaultCategory.EGRESS: [
+        ("auth-control-gap", 0.45,
+         "Unexpected egress from {selector}: runtime sensor / netpol gap"),
+    ],
+    FaultCategory.RUNTIME: [
+        ("config-change", 0.40,
+         "Runtime tamper on {selector}: missing read-only/seccomp guard"),
+    ],
+}
+
+# Symptom phrases that BOOST a particular fix-class's confidence. Coarse but
+# useful: when the tester report explicitly says "latency p95 spiked", that
+# strongly supports the missing-timeout candidate.
+_SYMPTOM_BOOSTS: dict[str, list[tuple[str, float]]] = {
+    "missing-timeout": [
+        ("latency", 0.15), ("p95", 0.10), ("hung", 0.20), ("timeout", 0.10),
+    ],
+    "missing-retry": [
+        ("transient", 0.15), ("connection refused", 0.15), ("5xx", 0.10),
+        ("retry", 0.05),
+    ],
+    "missing-fallback": [
+        ("503", 0.10), ("unavailable", 0.10), ("cascade", 0.20),
+    ],
+    "auth-control-gap": [
+        ("401", 0.10), ("403", 0.10), ("unauthenticated", 0.15), ("bypass", 0.20),
+    ],
+    "secret-handling": [
+        ("expired", 0.20), ("invalid signature", 0.15), ("rotation", 0.15),
+    ],
+    "image-policy": [
+        ("admitted", 0.20), ("vulnerable", 0.10), ("CVE-", 0.10),
+    ],
+}
+
+
+class StaticDiagnoser:
+    """Rule-based diagnostician: maps chaos fault category -> fix-class candidates.
+
+    No LLM, no I/O. Reads the timeline and failed reports, returns ranked
+    RootCauseHypothesis objects with deterministic confidence scoring.
+
+    Coverage is shallow (lookups, not understanding) — but the floor is non-zero
+    and it costs nothing. Compose with ClaudeDiagnoser via a hybrid wrapper for
+    the hard cases.
+    """
+
+    def __init__(self, *, max_hypotheses: int = 5) -> None:
+        self.max_hypotheses = max_hypotheses
+
+    async def diagnose(
+        self,
+        *,
+        request: DiagnosisRequest,
+        loki: LokiBackend | None = None,
+        prom: PromBackend | None = None,
+        code: TargetCodeReader | None = None,
+    ) -> list[RootCauseHypothesis]:
+        # Pull the symptom corpus from failed reports (probe names + anomalies +
+        # security finding titles). Used for confidence boosts.
+        symptom_text = _gather_symptom_text(request)
+
+        # Group timeline events by fault_name -> first selector-ish detail string.
+        # The catalogue tells us each fault's category; we use that to look up rules.
+        from agents.chaos.faults._meta import CATALOGUE
+
+        # Walk every fault that appeared in the timeline (deduplicated by name).
+        seen_faults: set[str] = set()
+        candidates: list[RootCauseHypothesis] = []
+        for ev in request.chaos_timeline.events:
+            if ev.fault_name in seen_faults:
+                continue
+            if ev.fault_name not in CATALOGUE:
+                continue  # synthetic events like (preflight) / (orchestration)
+            seen_faults.add(ev.fault_name)
+            cat = CATALOGUE[ev.fault_name].category
+            rules = _FAULT_TO_FIX_RULES.get(cat, [])
+            selector = ev.detail or ev.fault_name
+            for fix_class, base_conf, summary_template in rules:
+                conf = _adjust_confidence(base_conf, fix_class, symptom_text)
+                candidates.append(
+                    RootCauseHypothesis(
+                        summary=summary_template.format(selector=selector),
+                        confidence=conf,
+                        evidence=_build_evidence(request, ev),
+                        suggested_fix_class=fix_class,  # type: ignore[arg-type]
+                        affected_paths=_extract_paths(request),
+                    )
+                )
+
+        # Always include a working-as-intended floor when nothing else fired —
+        # the agent layer already adds this if the diagnoser returns empty, but
+        # being explicit keeps the static path self-contained.
+        if not candidates:
+            candidates.append(
+                RootCauseHypothesis(
+                    summary=(
+                        "static rules found no chaos-category match for the "
+                        "timeline; this may be working-as-intended or need "
+                        "LLM-driven analysis"
+                    ),
+                    confidence=0.1,
+                    evidence=["static diagnoser had no rule for the observed fault category"],
+                    suggested_fix_class="working-as-intended",
+                    affected_paths=_extract_paths(request),
+                )
+            )
+
+        candidates.sort(key=lambda h: h.confidence, reverse=True)
+        return candidates[: self.max_hypotheses]
+
+
+def _gather_symptom_text(request: DiagnosisRequest) -> str:
+    """Concatenate everything the failed reports said, lowercased."""
+    parts: list[str] = []
+    if request.failed_tester_report:
+        parts.extend(request.failed_tester_report.failed_probes)
+        parts.extend(request.failed_tester_report.anomalies)
+        parts.append(request.failed_tester_report.notes)
+    if request.failed_security_report:
+        for f in request.failed_security_report.findings:
+            parts.append(f.title)
+            parts.append(f.description)
+    return " ".join(parts).lower()
+
+
+def _adjust_confidence(base: float, fix_class: str, symptom_text: str) -> float:
+    """Apply symptom-keyword boosts; clamp to [0, 1]."""
+    boosts = _SYMPTOM_BOOSTS.get(fix_class, [])
+    bonus = 0.0
+    for phrase, weight in boosts:
+        if phrase.lower() in symptom_text:
+            bonus += weight
+    return max(0.0, min(1.0, base + bonus))
+
+
+def _build_evidence(request: DiagnosisRequest, event) -> list[str]:
+    """Cite the timeline event + the most relevant failed-report bits."""
+    out = [
+        f"chaos timeline: {event.event} {event.fault_name} "
+        f"at {event.timestamp.isoformat(timespec='seconds')}"
+    ]
+    if request.failed_tester_report and request.failed_tester_report.anomalies:
+        # First anomaly is usually the most actionable.
+        out.append(f"tester anomaly: {request.failed_tester_report.anomalies[0]}")
+    if request.failed_tester_report and request.failed_tester_report.failed_probes:
+        out.append(
+            f"tester failed_probes: {', '.join(request.failed_tester_report.failed_probes[:3])}"
+        )
+    if request.failed_security_report and request.failed_security_report.findings:
+        f0 = request.failed_security_report.findings[0]
+        out.append(f"security finding ({f0.severity.value}): {f0.title}")
+    return out
+
+
+def _extract_paths(request: DiagnosisRequest) -> list[str]:
+    """Best-effort: pull file paths from failed-tester-report notes / anomalies.
+
+    This is genuinely the LLM's job — static can't infer affected files from
+    probe failures. Returns an empty list rather than guessing.
+    """
+    return []
+
+
+# ---------------------------------------------------------------------------- #
 # Claude-backed implementation                                                 #
 # ---------------------------------------------------------------------------- #
 

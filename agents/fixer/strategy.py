@@ -69,6 +69,185 @@ class FixtureFixerStrategy:
 
 
 # ---------------------------------------------------------------------------- #
+# Static (template-based, no LLM)                                              #
+# ---------------------------------------------------------------------------- #
+
+
+# Per fix-class: the proposal we'd hand a human reviewer.
+#
+# These templates don't produce real diffs — that needs the LLM (or a future
+# AST-aware patcher). They produce a clear, actionable summary of what change
+# is needed plus a sketched test path. Good enough to draft a human-reviewable
+# work item without spending tokens or guessing in code.
+@dataclass(frozen=True)
+class _FixTemplate:
+    summary: str  # one-liner for FixerOutput.reasoning leading line
+    detail: str  # multi-line "what to change and why"
+    suggests_regression_test: bool
+
+
+_FIX_TEMPLATES: dict[str, _FixTemplate] = {
+    "missing-retry": _FixTemplate(
+        summary="Add retry/backoff around the dependency call",
+        detail=(
+            "Wrap the offending call in a retry decorator with a small number "
+            "of attempts and exponential backoff. Recommended primitives:\n"
+            "  - tenacity (`@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.1, max=2))`)\n"
+            "  - or hand-rolled `for attempt in range(3): try: ... except <TransientError>: ...`\n"
+            "Cap the total time so the hot path can't be tied up by a slow dep."
+        ),
+        suggests_regression_test=True,
+    ),
+    "missing-timeout": _FixTemplate(
+        summary="Add an explicit timeout to the call",
+        detail=(
+            "Add `timeout=<seconds>` to the call. For HTTP, 5-10s is typical for "
+            "user-facing paths, 30s for batch. For subprocess, set a hard cap "
+            "and `wait_for(timeout=...)` if async. Match the timeout to the "
+            "downstream SLA, not the network."
+        ),
+        suggests_regression_test=True,
+    ),
+    "missing-circuit-breaker": _FixTemplate(
+        summary="Add a circuit breaker around the failing dependency",
+        detail=(
+            "Wrap the call in a circuit breaker (e.g., circuitbreaker, pybreaker, "
+            "or custom). Open the circuit after N consecutive failures, fail "
+            "fast for the cooldown window, then probe."
+        ),
+        suggests_regression_test=True,
+    ),
+    "missing-fallback": _FixTemplate(
+        summary="Add a graceful-degradation fallback when the dependency is unavailable",
+        detail=(
+            "Catch the dependency error and return a degraded but valid response "
+            "(empty cart, cached value, default config). The user-visible failure "
+            "mode should be 'no enrichment' rather than '5xx'. If no degraded "
+            "response is acceptable, document the dependency as critical and "
+            "ensure the on-call runbook covers it."
+        ),
+        suggests_regression_test=True,
+    ),
+    "auth-control-gap": _FixTemplate(
+        summary="Tighten the auth control to fail closed when the IdP is unavailable",
+        detail=(
+            "Audit the auth path's behavior when the IdP returns 5xx, times out, "
+            "or rate-limits. The default must be DENY (5xx, not 200). Remove or "
+            "guard any 'dev fallback' branches; verify with an integration test "
+            "that exercises the auth-down path."
+        ),
+        suggests_regression_test=True,
+    ),
+    "secret-handling": _FixTemplate(
+        summary="Make secret handling tolerate rotation / revocation",
+        detail=(
+            "Reload secret material on a fixed interval or on first 401/403 from "
+            "the dependency. Don't cache for the lifetime of the process. For "
+            "certs, refresh from the truststore periodically; for API keys, read "
+            "from the secret store on each call (or cache with a short TTL)."
+        ),
+        suggests_regression_test=True,
+    ),
+    "image-policy": _FixTemplate(
+        summary="Tighten admission policy to reject the offending image class",
+        detail=(
+            "Add (or correct) a Kyverno / Gatekeeper / OPA policy that rejects "
+            "deployments with vulnerable or unsigned images. Verify with a "
+            "policy unit test (conftest / kyverno test) that the offending image "
+            "is denied at admission."
+        ),
+        suggests_regression_test=False,  # config-only; uses policy tests, not code tests
+    ),
+    "config-change": _FixTemplate(
+        summary="Adjust configuration to match the observed failure mode",
+        detail=(
+            "Determine the right config knob (resource limit, replica count, "
+            "network policy, timeout budget) and apply it to the relevant "
+            "manifest. No application code change needed."
+        ),
+        suggests_regression_test=False,
+    ),
+    "test-gap": _FixTemplate(
+        summary="Add the test that should have caught this",
+        detail=(
+            "The bug exists because the test suite didn't cover this scenario. "
+            "Write the regression test FIRST (it should fail against current "
+            "code), then either (a) the code change is obvious from the test, "
+            "or (b) hand off to humans with a clear failing test."
+        ),
+        suggests_regression_test=True,
+    ),
+    "code-patch": _FixTemplate(
+        summary="Apply a code patch (specifics depend on the diagnosis)",
+        detail=(
+            "Generic code-patch class — see the diagnosis evidence for what "
+            "needs to change. Static templates can't infer the exact change; "
+            "this proposal is a placeholder for human or LLM follow-up."
+        ),
+        suggests_regression_test=True,
+    ),
+}
+
+
+def _suggested_test_path(source_path: str) -> str:
+    """Sketch a sensible regression-test path for a source file.
+
+    Keeps the language convention: ``services/cart/handler.py`` ->
+    ``services/cart/tests/test_handler_regression.py``.
+    """
+    parts = source_path.replace("\\", "/").split("/")
+    if len(parts) == 1:
+        return f"tests/test_{Path(parts[0]).stem}_regression.py"
+    *dirs, fname = parts
+    stem = Path(fname).stem
+    return "/".join([*dirs, "tests", f"test_{stem}_regression.py"])
+
+
+class StaticFixerStrategy:
+    """Template-based fixer — no LLM, no actual file edits.
+
+    Produces a FixerOutput whose `reasoning` describes WHAT to change and WHY,
+    based on the top hypothesis's `suggested_fix_class`. `files_touched`
+    enumerates the affected source files (from the diagnosis) plus a sketched
+    regression-test path. The actual diff and the gh PR are out of scope —
+    this is a structured work item the agent can hand to a human or to
+    ClaudeFixerStrategy for code generation.
+    """
+
+    async def propose(
+        self, *, diagnosis: DiagnosisReport, intended_action: FixAction
+    ) -> FixerOutput:
+        # The agent has already routed us here; trust the top hypothesis.
+        top = diagnosis.hypotheses[0]
+        fix_class = top.suggested_fix_class
+        tmpl = _FIX_TEMPLATES.get(fix_class) or _FIX_TEMPLATES["code-patch"]
+
+        files_touched: list[str] = list(top.affected_paths)
+        if tmpl.suggests_regression_test and files_touched:
+            test_path = _suggested_test_path(files_touched[0])
+            if test_path not in files_touched:
+                files_touched.append(test_path)
+
+        evidence_lines = "\n".join(f"  - {e}" for e in top.evidence) or "  - (none)"
+        reasoning = (
+            f"{tmpl.summary}\n\n"
+            f"{tmpl.detail}\n\n"
+            f"Diagnosis context:\n"
+            f"  hypothesis: {top.summary}\n"
+            f"  fix class:  {fix_class}\n"
+            f"  confidence: {top.confidence:.2f}\n"
+            f"  evidence:\n{evidence_lines}\n"
+        )
+
+        return FixerOutput(
+            reasoning=reasoning,
+            files_touched=files_touched,
+            regression_test_added=tmpl.suggests_regression_test and bool(top.affected_paths),
+            pr_url=None,
+        )
+
+
+# ---------------------------------------------------------------------------- #
 # Claude-backed implementation                                                 #
 # ---------------------------------------------------------------------------- #
 
