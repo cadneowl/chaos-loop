@@ -6,7 +6,6 @@ from pathlib import Path
 
 import typer
 
-from agents._cli import notice
 from agents.fixer.policy import (
     DEFAULT_MIN_CONFIDENCE,
     PathDenylist,
@@ -180,24 +179,6 @@ catalogue so future runs classify it correctly, then re-run the experiment.
 # ---------- CLI ----------------------------------------------------------------
 
 app = typer.Typer(help="Fixer — draft PRs, never auto-merges.", no_args_is_help=True)
-
-
-@app.command()
-def propose(
-    experiment_id: str = typer.Option(..., "--experiment-id"),
-    open_pr: bool = typer.Option(False, "--open-pr/--no-pr"),
-) -> None:
-    """Generate a fix proposal. Real LLM strategy wiring lands in M6.x."""
-    notice(
-        "fixer",
-        "propose",
-        "milestone-6.x" if open_pr else "milestone-6.0",
-        hint=(
-            f"would load record {experiment_id}, build a ClaudeFixerStrategy, "
-            f"run ClaudeFixerAgent.propose_fix()"
-            + (", then `gh pr create --draft`" if open_pr else ", emit artifact only")
-        ),
-    )
 
 
 @app.command(name="gh-status")

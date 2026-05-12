@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,6 +47,29 @@ class AgentInvocation:
     error: str | None = None
     input_summary: str = ""
     output_summary: str = ""
+    spend_usd: float | None = None
+
+
+# Per-task slot pointing at the currently-running AgentInvocation. ``_llm`` reads
+# this to attribute LLM cost to the invocation that triggered the call, without
+# threading a harness reference through every strategy constructor.
+_current_invocation: ContextVar[AgentInvocation | None] = ContextVar(
+    "_current_invocation", default=None
+)
+
+
+def record_llm_spend(usd: float) -> None:
+    """Add ``usd`` to the current invocation's cumulative spend.
+
+    Called from ``agents._llm.complete_with_tools`` after each completion.
+    No-op when there's no current invocation (e.g., tests or direct CLI use).
+    """
+    if usd <= 0:
+        return
+    inv = _current_invocation.get()
+    if inv is None:
+        return
+    inv.spend_usd = (inv.spend_usd or 0.0) + usd
 
 
 @dataclass
@@ -94,7 +118,7 @@ class _Wrapped:
         self.__dict__["_h_inner"] = inner
         self.__dict__["_h_harness"] = harness
 
-    def __getattr__(self, item: str):
+    def __getattr__(self, item: str) -> Any:
         inner = self.__dict__["_h_inner"]
         target = getattr(inner, item)
         if not asyncio.iscoroutinefunction(target):
@@ -108,8 +132,10 @@ class _Wrapped:
         raise AttributeError(f"cannot assign {key!r} on a wrapped agent (read-only proxy)")
 
 
-def _wrap_coroutine(agent: str, method: str, target, harness: Harness):
-    async def wrapped(*args: Any, **kwargs: Any):
+def _wrap_coroutine(
+    agent: str, method: str, target: Any, harness: Harness
+) -> Any:
+    async def wrapped(*args: Any, **kwargs: Any) -> Any:
         start_ms = time.time() * 1000
         inv = AgentInvocation(
             agent=agent,
@@ -117,6 +143,7 @@ def _wrap_coroutine(agent: str, method: str, target, harness: Harness):
             started_at_ms=int(start_ms),
             input_summary=_summarize_inputs(args, kwargs),
         )
+        token = _current_invocation.set(inv)
         try:
             result = await target(*args, **kwargs)
             inv.ok = True
@@ -129,6 +156,7 @@ def _wrap_coroutine(agent: str, method: str, target, harness: Harness):
             end_ms = time.time() * 1000
             inv.finished_at_ms = int(end_ms)
             inv.duration_ms = end_ms - start_ms
+            _current_invocation.reset(token)
             harness.record(inv)
 
     return wrapped

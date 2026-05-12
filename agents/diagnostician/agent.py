@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import typer
-
-from agents._cli import notice
 from agents.diagnostician.diagnoser import Diagnoser
 from agents.diagnostician.tools.code_reader import TargetCodeReader
 from agents.diagnostician.tools.loki import LokiBackend
@@ -89,31 +86,3 @@ def _notes_for(req: DiagnosisRequest) -> str:
         )
     bits.append(f"chaos: {len(req.chaos_timeline.events)} timeline event(s)")
     return "; ".join(bits)
-
-
-# ---------- CLI ----------------------------------------------------------------
-
-app = typer.Typer(help="Diagnostician (debugger) — RCA from logs + traces + code.", no_args_is_help=True)
-
-
-@app.command()
-def diagnose(
-    experiment_id: str = typer.Option(..., "--experiment-id"),
-) -> None:
-    """Diagnose a specific past experiment by ID. Real LLM wiring lands in M5.x."""
-    notice("diagnostician", "diagnose", "milestone-5.x",
-           hint=(
-               f"would load record {experiment_id}, build a ClaudeDiagnoser, "
-               "and run ClaudeDiagnosticianAgent.diagnose()"
-           ))
-
-
-@app.command()
-def replay(fixture: Path = typer.Argument(..., exists=True, readable=True)) -> None:
-    """Replay diagnosis against a recorded fixture."""
-    notice("diagnostician", "replay", "milestone-5.x",
-           hint=f"would replay against {fixture}")
-
-
-if __name__ == "__main__":
-    app()

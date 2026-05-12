@@ -70,6 +70,11 @@ class _MockChaos:
     async def cleanup(self, plan: ExperimentPlan) -> None:
         return None
 
+    async def get_namespace_annotations(self, namespace: str) -> dict[str, str]:
+        # The dry-run path always satisfies the namespace-annotation gate so
+        # the loop runs end-to-end without cluster setup.
+        return {"chaos.kosta.dev/allowed": "true"}
+
 
 class _MockDiagnostician:
     async def diagnose(self, req: DiagnosisRequest) -> DiagnosisReport:

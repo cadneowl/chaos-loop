@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from orchestrator import safety
@@ -53,6 +54,10 @@ class SecurityAgent(Protocol):
 class ChaosAgent(Protocol):
     async def execute(self, plan: ExperimentPlan) -> ChaosTimeline: ...
     async def cleanup(self, plan: ExperimentPlan) -> None: ...
+    # Optional: gate uses this to verify namespace annotation. Implementations
+    # without a cluster reference (e.g., mocks) can omit it; the loop treats
+    # AttributeError as "annotations unavailable".
+    async def get_namespace_annotations(self, namespace: str) -> dict[str, str] | None: ...
 
 
 class DiagnosticianAgent(Protocol):
@@ -102,6 +107,10 @@ class ExperimentRunner:
             return self._abort(record, fail.reason, fail.detail)
         if fail := safety.check_blast_radius(plan):
             return self._abort(record, fail.reason, fail.detail)
+        if plan.safety.require_namespace_annotation:
+            annotations = await self._fetch_namespace_annotations(plan.safety.namespace)
+            if fail := safety.check_namespace_annotation(plan.safety, annotations):
+                return self._abort(record, fail.reason, fail.detail)
 
         # --- baseline -------------------------------------------------------
         record.state = ExperimentState.BASELINE
@@ -132,7 +141,7 @@ class ExperimentRunner:
         record.state = ExperimentState.BASELINE_OK
         self.store.save(record)
 
-        if fail := safety.check_budget(budget.spent_usd, plan.budget.hard_cap_usd):
+        if fail := self._check_budget_step(budget, record):
             return self._abort(record, fail.reason, fail.detail)
 
         # --- inject ---------------------------------------------------------
@@ -187,6 +196,9 @@ class ExperimentRunner:
             record.state = ExperimentState.STEADY
             return self._finish(record)
 
+        if fail := self._check_budget_step(budget, record):
+            return self._abort(record, fail.reason, fail.detail)
+
         # --- diagnose -------------------------------------------------------
         record.state = ExperimentState.REGRESSED
         self.store.save(record)
@@ -210,11 +222,59 @@ class ExperimentRunner:
         record.state = ExperimentState.DIAGNOSED
         self.store.save(record)
 
+        if fail := self._check_budget_step(budget, record):
+            return self._abort(record, fail.reason, fail.detail)
+
         # --- propose fix ----------------------------------------------------
         record.state = ExperimentState.PROPOSE_FIX
         record.fix_proposal = await self.agents.fixer.propose_fix(record.diagnosis)
         record.state = ExperimentState.FIX_PROPOSED
         return self._finish(record)
+
+    # ----- helpers ----------------------------------------------------------
+
+    def _check_budget_step(
+        self, budget: BudgetTracker, record: ExperimentRecord
+    ) -> safety.GateFailure | None:
+        """Refresh spend from the harness, persist it on the record, and gate.
+
+        Called after every agent invocation that could spend tokens. Returns a
+        `GateFailure` if the experiment must abort, else None.
+        """
+        if self.harness is not None:
+            budget.spent_usd = sum(
+                inv.spend_usd or 0.0 for inv in self.harness.invocations
+            )
+        record.spend_usd = budget.spent_usd
+        if budget.soft_warn_due():
+            log.warning(
+                "experiment %s passed soft budget cap: $%.2f >= $%.2f",
+                record.experiment_id, budget.spent_usd, budget.budget.soft_cap_usd,
+            )
+        if budget.hard_exceeded():
+            return safety.GateFailure(
+                AbortReason.BUDGET_EXCEEDED,
+                f"hard cap: spent=${budget.spent_usd:.2f} cap=${budget.budget.hard_cap_usd:.2f} "
+                f"elapsed={budget.elapsed_seconds():.0f}s wall_clock={budget.budget.wall_clock_seconds}s",
+            )
+        return None
+
+    async def _fetch_namespace_annotations(self, namespace: str) -> dict[str, str] | None:
+        """Ask the chaos agent for namespace annotations.
+
+        Returns ``None`` if the agent doesn't expose the method (mocks, dry-run)
+        — the safety gate then treats that as "unverifiable" and fails closed
+        per ``check_namespace_annotation``'s contract.
+        """
+        getter = getattr(self.agents.chaos, "get_namespace_annotations", None)
+        if getter is None:
+            return None
+        try:
+            result: dict[str, str] | None = await getter(namespace)
+        except Exception as e:
+            log.warning("namespace annotation fetch failed: %r", e)
+            return None
+        return result
 
     def _attach_invocations(self, record: ExperimentRecord) -> None:
         """Copy the latest harness invocations onto the record before each save.
@@ -240,12 +300,22 @@ class ExperimentRunner:
         record.state = ExperimentState.ABORTED
         record.abort_reason = reason
         record.abort_detail = detail
+        record.finished_at = datetime.now(tz=UTC)
         self._attach_invocations(record)
+        self._sync_spend(record)
         self.store.save(record)
         return record
 
     def _finish(self, record: ExperimentRecord) -> ExperimentRecord:
         record.state = ExperimentState.RECORDED
+        record.finished_at = datetime.now(tz=UTC)
         self._attach_invocations(record)
+        self._sync_spend(record)
         self.store.save(record)
         return record
+
+    def _sync_spend(self, record: ExperimentRecord) -> None:
+        """Make ``record.spend_usd`` reflect the final invocation log before save."""
+        if self.harness is None:
+            return
+        record.spend_usd = sum(inv.spend_usd or 0.0 for inv in self.harness.invocations)

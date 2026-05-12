@@ -15,15 +15,18 @@ Implementations:
 from __future__ import annotations
 
 import json
-import re
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Protocol, get_args
+from typing import Any, Protocol, get_args
 
+from agents._json import parse_json_list
 from agents.diagnostician.tools.code_reader import CodeReadError, TargetCodeReader
 from agents.diagnostician.tools.loki import LokiBackend, LokiQueryError
 from agents.tester.tools.prometheus import PromBackend, PromQueryError
-from shared.contracts import DiagnosisRequest, RootCauseHypothesis
+from shared.contracts import DiagnosisRequest, RootCauseHypothesis, TimelineEvent
+
+_log = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 
@@ -233,18 +236,22 @@ class StaticDiagnoser:
         # The catalogue tells us each fault's category; we use that to look up rules.
         from agents.chaos.faults._meta import CATALOGUE
 
-        # Walk every fault that appeared in the timeline (deduplicated by name).
-        seen_faults: set[str] = set()
-        candidates: list[RootCauseHypothesis] = []
+        # For each real fault in the timeline, pick the most descriptive event's
+        # detail (some events like "scheduled" have empty detail; "started"
+        # usually has a CRD name we can quote). One hypothesis-group per fault.
+        best_event: dict[str, Any] = {}
         for ev in request.chaos_timeline.events:
-            if ev.fault_name in seen_faults:
-                continue
             if ev.fault_name not in CATALOGUE:
                 continue  # synthetic events like (preflight) / (orchestration)
-            seen_faults.add(ev.fault_name)
-            cat = CATALOGUE[ev.fault_name].category
+            prev = best_event.get(ev.fault_name)
+            if prev is None or (not prev.detail and ev.detail):
+                best_event[ev.fault_name] = ev
+
+        candidates: list[RootCauseHypothesis] = []
+        for fault_name, ev in best_event.items():
+            cat = CATALOGUE[fault_name].category
             rules = _FAULT_TO_FIX_RULES.get(cat, [])
-            selector = ev.detail or ev.fault_name
+            selector = ev.detail or fault_name
             for fix_class, base_conf, summary_template in rules:
                 conf = _adjust_confidence(base_conf, fix_class, symptom_text)
                 candidates.append(
@@ -303,7 +310,7 @@ def _adjust_confidence(base: float, fix_class: str, symptom_text: str) -> float:
     return max(0.0, min(1.0, base + bonus))
 
 
-def _build_evidence(request: DiagnosisRequest, event) -> list[str]:
+def _build_evidence(request: DiagnosisRequest, event: TimelineEvent) -> list[str]:
     """Cite the timeline event + the most relevant failed-report bits."""
     out = [
         f"chaos timeline: {event.event} {event.fault_name} "
@@ -334,11 +341,6 @@ def _extract_paths(request: DiagnosisRequest) -> list[str]:
 # ---------------------------------------------------------------------------- #
 # Hybrid (Static + optional LLM)                                               #
 # ---------------------------------------------------------------------------- #
-
-
-import logging  # noqa: E402
-
-_log = logging.getLogger(__name__)
 
 
 class HybridDiagnoser:
@@ -659,41 +661,12 @@ def _parse_hypotheses(text: str) -> list[RootCauseHypothesis]:
     set of allowed values from the system prompt; if it invents one we drop the item
     rather than try to coerce).
     """
-    if not text.strip():
-        return []
-    raw = _extract_json_blob(text)
-    if raw is None:
-        return []
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if isinstance(payload, dict):
-        payload = [payload]
-    if not isinstance(payload, list):
-        return []
-
     out: list[RootCauseHypothesis] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        fix_cls = item.get("suggested_fix_class")
-        if fix_cls not in _VALID_FIX_CLASSES:
+    for item in parse_json_list(text):
+        if item.get("suggested_fix_class") not in _VALID_FIX_CLASSES:
             continue
         try:
             out.append(RootCauseHypothesis.model_validate(item))
         except Exception:
             continue
     return out
-
-
-def _extract_json_blob(text: str) -> str | None:
-    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fence:
-        return fence.group(1).strip()
-    indices = [(text.find(ch), ch) for ch in "[{"]
-    valid = [(i, ch) for i, ch in indices if i != -1]
-    if not valid:
-        return None
-    valid.sort()
-    return text[valid[0][0]:].strip()

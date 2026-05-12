@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from agents.tester.agent import ClaudeTesterAgent
 from agents.tester.hypothesizer import (
     ClaudeHypothesizer,
@@ -188,11 +186,16 @@ def test_hypothesize_passes_target_to_hypothesizer() -> None:
 # ---------------------------------------------------------------------------- #
 
 
-def test_claude_hypothesizer_requires_code_reader() -> None:
-    """Without a code reader the LLM has nothing to read; fail-loud."""
+def test_claude_hypothesizer_returns_empty_without_code_reader(caplog) -> None:
+    """Without a code reader the LLM has nothing to read; degrade silently to []
+    (mirrors StaticHypothesizer's behavior so the Hypothesizer Protocol is
+    consistent across implementations). Emits a warning so it's not invisible."""
+    import logging
     h = ClaudeHypothesizer()
-    with pytest.raises(ValueError, match="TargetCodeReader"):
-        asyncio.run(h.generate(target_app="x", target_repo=None, code=None))
+    with caplog.at_level(logging.WARNING, logger="agents.tester.hypothesizer"):
+        result = asyncio.run(h.generate(target_app="x", target_repo=None, code=None))
+    assert result == []
+    assert any("TargetCodeReader" in rec.message for rec in caplog.records)
 
 
 def test_claude_hypothesizer_default_model() -> None:

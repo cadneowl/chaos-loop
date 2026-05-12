@@ -138,6 +138,9 @@ async def complete_with_tools(
         cost = _extract_cost(resp)
         if cost is not None:
             spend_usd = (spend_usd or 0.0) + cost
+            # Attribute to the harness invocation that drove this call, if any.
+            from agents._harness import record_llm_spend
+            record_llm_spend(cost)
 
         msg = resp.choices[0].message
         if msg.content:

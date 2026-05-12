@@ -25,12 +25,16 @@ console = Console()
 
 
 # Experiment states that are NOT terminal — abort applies to these.
+# Includes transient *_FAIL states because a crash between setting them and
+# the subsequent _abort() leaves a record stuck there.
 _LIVE_STATES: set[ExperimentState] = {
     ExperimentState.INITIALIZING,
     ExperimentState.BASELINE,
     ExperimentState.BASELINE_OK,
+    ExperimentState.BASELINE_FAIL,
     ExperimentState.INJECT,
     ExperimentState.INJECTED,
+    ExperimentState.INJECT_FAILED,
     ExperimentState.VERIFY,
     ExperimentState.REGRESSED,
     ExperimentState.DIAGNOSE,
@@ -65,6 +69,14 @@ def run(
     loki_url: str | None = typer.Option(None, "--loki-url", envvar="LOKI_URL"),
     target_repo_path: str | None = typer.Option(
         None, "--target-repo-path", envvar="TARGET_REPO_PATH"
+    ),
+    kubeconfig: str | None = typer.Option(
+        None, "--kubeconfig", envvar="KUBECONFIG",
+        help="Path to kubeconfig. Defaults to ~/.kube/config.",
+    ),
+    kube_context: str | None = typer.Option(
+        None, "--kube-context", envvar="KUBE_CONTEXT",
+        help="Kubeconfig context to use (e.g. 'kind-chaos-dev').",
     ),
     model: str = typer.Option(
         "claude-opus-4-7",
@@ -104,19 +116,32 @@ def run(
         wrapped = {
             name: harness.instrument(name, inst) for name, inst in agent_dict.items()
         }
-        agents = Agents(**wrapped)  # type: ignore[arg-type]
+        agents = Agents(**wrapped)
     else:
-        from agents._factory import AgentConfig, AgentConfigError, build_real_agents
+        from agents._factory import (
+            AgentConfig,
+            AgentConfigError,
+            Profile,
+            build_real_agents,
+        )
+
+        if profile not in ("static", "hybrid", "llm"):
+            raise typer.BadParameter(
+                f"--profile must be one of static / hybrid / llm, got {profile!r}"
+            )
+        profile_lit: Profile = profile  # type: ignore[assignment]
 
         cfg = AgentConfig(
             prom_url=prom_url,
             loki_url=loki_url,
             target_repo_path=target_repo_path,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
             model=model,
             api_base=api_base,
         )
         try:
-            agents = build_real_agents(cfg, profile=profile, harness=harness)  # type: ignore[arg-type]
+            agents = build_real_agents(cfg, profile=profile_lit, harness=harness)
         except AgentConfigError as e:
             raise typer.BadParameter(str(e)) from e
 
@@ -155,7 +180,7 @@ def show(experiment_id: str, db: Path | None = typer.Option(None, "--db")) -> No
 
 @app.command()
 def abort(
-    experiment_id: str = typer.Argument(None, help="Experiment ID; omit with --all"),
+    experiment_id: str | None = typer.Argument(None, help="Experiment ID; omit with --all"),
     all_: bool = typer.Option(False, "--all", help="Abort every non-terminal experiment"),
     reason: AbortReason = typer.Option(AbortReason.USER_KILL, "--reason"),
     detail: str = typer.Option("", "--detail"),
@@ -164,9 +189,10 @@ def abort(
     """
     Mark an experiment (or all live experiments) as aborted in the store.
 
-    Note: this does NOT clean up Chaos Mesh CRDs in v1 — call `scripts/abort.sh`
-    or `kubectl delete <kind>chaos --all` separately. Cluster-side cleanup lands
-    with milestone-3.
+    Note: this updates the store only. Chaos Mesh CRDs are not deleted here —
+    call `agents.chaos.agent.ClaudeChaosAgent.cleanup()` programmatically, or
+    `kubectl delete <kind>chaos -l chaos.kosta.dev/experiment-id=<id>` to clean
+    the cluster.
     """
     if not all_ and not experiment_id:
         raise typer.BadParameter("provide an experiment_id or pass --all")
@@ -178,6 +204,7 @@ def abort(
     if all_:
         targets = [r for r in store.recent(limit=200) if r.state in _LIVE_STATES]
     else:
+        assert experiment_id is not None  # guarded by typer.BadParameter above
         record = store.load(experiment_id)
         if record is None:
             console.print(f"[red]no experiment {experiment_id} in store[/red]")
@@ -193,12 +220,16 @@ def abort(
         console.print("[green]nothing to abort[/green]")
         return
 
+    from datetime import UTC, datetime
+    now = datetime.now(tz=UTC)
     for r in targets:
+        prior_state = r.state.value  # capture BEFORE mutating
         r.state = ExperimentState.ABORTED
         r.abort_reason = reason
         r.abort_detail = detail or "manual abort"
+        r.finished_at = now
         store.save(r)
-        console.print(f"aborted: {r.experiment_id} (was {r.state.value})")
+        console.print(f"aborted: {r.experiment_id} (was {prior_state})")
 
 
 @app.command(name="list-faults")

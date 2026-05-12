@@ -16,7 +16,6 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from agents._cli import notice
 from agents.diagnostician.tools.code_reader import TargetCodeReader
 from agents.tester.hypothesizer import ClaudeHypothesizer, Hypothesizer
 from agents.tester.probes import (
@@ -306,13 +305,6 @@ def hypothesize(
     )
     report = asyncio.run(agent.hypothesize(req))
     console.print_json(json.dumps(report.model_dump(mode="json")))
-
-
-@app.command()
-def replay(fixture: Path = typer.Argument(..., exists=True, readable=True)) -> None:
-    """Replay against a recorded fixture (CI use)."""
-    notice("tester", "replay", "milestone-2.0",
-           hint=f"would replay against {fixture}")
 
 
 if __name__ == "__main__":

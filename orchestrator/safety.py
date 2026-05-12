@@ -40,11 +40,23 @@ def check_cluster_allowed(constraints: SafetyConstraints) -> GateFailure | None:
 
 def check_namespace_annotation(
     constraints: SafetyConstraints,
-    annotations: dict[str, str],
+    annotations: dict[str, str] | None,
 ) -> GateFailure | None:
-    """Require explicit `chaos.kosta.dev/allowed: "true"` on the target namespace."""
+    """Require explicit `chaos.kosta.dev/allowed: "true"` on the target namespace.
+
+    ``annotations=None`` means we couldn't reach the cluster to fetch them. We
+    fail closed in that case when the gate is required: a chaos run that can't
+    verify its own targeting should not proceed.
+    """
     if not constraints.require_namespace_annotation:
         return None
+    if annotations is None:
+        return GateFailure(
+            AbortReason.CLUSTER_DENIED,
+            f"cannot verify annotation on namespace {constraints.namespace!r}: "
+            "annotations not available (cluster unreachable?). Set "
+            "require_namespace_annotation=false in the plan if intentional.",
+        )
     val = annotations.get("chaos.kosta.dev/allowed")
     if val != "true":
         return GateFailure(

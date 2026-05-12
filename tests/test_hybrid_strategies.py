@@ -61,16 +61,28 @@ def _h(
     )
 
 
-def test_normalize_ref_strips_line_numbers() -> None:
-    assert _normalize_ref("src/a.py:42") == "src/a.py"
-    assert _normalize_ref("src/a.py:42-55") == "src/a.py"
-    assert _normalize_ref("src\\a.py:1") == "src/a.py"
+def test_normalize_ref_keeps_line_number() -> None:
+    """Dedup is by file:line so two findings on different lines stay distinct."""
+    assert _normalize_ref("src/a.py:42") == "src/a.py:42"
+    # Line ranges collapse to the start line — same site, different display form.
+    assert _normalize_ref("src/a.py:42-55") == "src/a.py:42"
+    # Backslashes are normalized so Windows / POSIX paths compare equal.
+    assert _normalize_ref("src\\a.py:1") == "src/a.py:1"
+    # A reference with no line component (rare; left intact).
+    assert _normalize_ref("src/a.py") == "src/a.py"
 
 
-def test_are_duplicates_same_fault_same_file() -> None:
+def test_are_duplicates_same_fault_same_line() -> None:
+    a = _h(refs=["src/a.py:10"])
+    b = _h(refs=["src/a.py:10"])
+    assert _are_duplicates(a, b)
+
+
+def test_are_not_duplicates_same_file_different_lines() -> None:
+    """Two findings on different lines of the same file are distinct fragilities."""
     a = _h(refs=["src/a.py:10"])
     b = _h(refs=["src/a.py:50"])
-    assert _are_duplicates(a, b)
+    assert not _are_duplicates(a, b)
 
 
 def test_are_not_duplicates_different_fault() -> None:

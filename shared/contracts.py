@@ -56,8 +56,6 @@ class SafetyConstraints(BaseModel):
     allow_multi_fault: bool = False
     require_namespace_annotation: bool = True
     forbidden_cluster_substrings: tuple[str, ...] = ("prod", "production", "live", "main")
-    abort_slo_query: str | None = None
-    abort_slo_threshold: float | None = None
 
 
 class TokenBudget(BaseModel):
@@ -177,11 +175,28 @@ class StatisticalSample(BaseModel):
             metric=metric,
             samples=samples,
             mean=mean,
-            p50=s[n // 2],
-            p95=s[min(n - 1, int(n * 0.95))],
-            p99=s[min(n - 1, int(n * 0.99))],
+            p50=_percentile(s, 0.50),
+            p95=_percentile(s, 0.95),
+            p99=_percentile(s, 0.99),
             stdev=var**0.5,
         )
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Linear-interpolated percentile (NIST / numpy ``linear`` method).
+
+    Pre: ``sorted_values`` is non-empty and sorted ascending; ``0 <= pct <= 1``.
+    For p50 on ``[100, 200, 300, 400]`` returns 250 (not 300), matching the
+    standard statistical definition.
+    """
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    rank = pct * (n - 1)
+    lo = int(rank)
+    hi = min(lo + 1, n - 1)
+    frac = rank - lo
+    return sorted_values[lo] * (1 - frac) + sorted_values[hi] * frac
 
 
 class Hypothesis(BaseModel):
@@ -445,6 +460,7 @@ class AgentInvocationLog(BaseModel):
     error: str | None = None
     input_summary: str = ""
     output_summary: str = ""
+    spend_usd: float | None = None
 
 
 class ExperimentRecord(BaseModel):

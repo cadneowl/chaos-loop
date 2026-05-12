@@ -15,14 +15,21 @@ Implementations:
 from __future__ import annotations
 
 import json
-import re
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from agents._json import parse_json_object
 from agents.diagnostician.tools.code_reader import CodeReadError, TargetCodeReader
 from shared.contracts import DiagnosisReport, FixAction
+
+_log = logging.getLogger(__name__)
+
+# Minimum length for a usable LLM `reasoning` blob. A one-word reply slips the
+# truthiness check; this gives Static a chance to provide something richer.
+_MIN_REASONING_LEN = 50
 
 
 @dataclass(frozen=True)
@@ -252,11 +259,6 @@ class StaticFixerStrategy:
 # ---------------------------------------------------------------------------- #
 
 
-import logging  # noqa: E402
-
-_log = logging.getLogger(__name__)
-
-
 class HybridFixerStrategy:
     """LLM-first; fall back to Static on failure / empty output.
 
@@ -299,10 +301,13 @@ class HybridFixerStrategy:
             return await self._static.propose(
                 diagnosis=diagnosis, intended_action=intended_action
             )
-        if llm_out.files_touched or (llm_out.reasoning and llm_out.reasoning.strip()):
+        reasoning = (llm_out.reasoning or "").strip()
+        if llm_out.files_touched or len(reasoning) >= _MIN_REASONING_LEN:
             return llm_out
         _log.warning(
-            "HybridFixerStrategy: LLM returned empty output; falling back to static"
+            "HybridFixerStrategy: LLM output insufficient (files_touched=%d, "
+            "reasoning_len=%d); falling back to static",
+            len(llm_out.files_touched), len(reasoning),
         )
         return await self._static.propose(
             diagnosis=diagnosis, intended_action=intended_action
@@ -468,7 +473,12 @@ class ClaudeFixerStrategy:
         )
 
     def _write_artifact(self, experiment_id: str, parsed: dict) -> Path | None:
-        """Persist the parsed proposal to disk for human review."""
+        """Persist the parsed proposal to disk for human review.
+
+        Failure to write is non-fatal: we log a warning and return None so the
+        caller can omit the artifact path from the proposal. The fix proposal
+        itself still lands on the ExperimentRecord.
+        """
         root = self._artifact_root or _default_artifact_root()
         out_dir = root / experiment_id / "proposed"
         try:
@@ -476,23 +486,17 @@ class ClaudeFixerStrategy:
             path = out_dir / "edits.json"
             path.write_text(json.dumps(parsed, indent=2), encoding="utf-8")
             return path
-        except OSError:
+        except OSError as e:
+            _log.warning(
+                "ClaudeFixerStrategy: failed to write artifact under %s: %r",
+                out_dir, e,
+            )
             return None
 
 
 # ---------------------------------------------------------------------------- #
 # Helpers                                                                      #
 # ---------------------------------------------------------------------------- #
-
-
-def _text(s: str) -> dict:
-    """MCP-shaped success result."""
-    return {"content": [{"type": "text", "text": s}]}
-
-
-def _err(msg: str) -> dict:
-    """MCP-shaped error result."""
-    return {"content": [{"type": "text", "text": msg}], "is_error": True}
 
 
 def _build_user_prompt(diagnosis: DiagnosisReport, intended_action: FixAction) -> str:
@@ -514,16 +518,8 @@ def _build_user_prompt(diagnosis: DiagnosisReport, intended_action: FixAction) -
 
 def _parse_fix_proposal(text: str) -> dict | None:
     """Pull a JSON object from the model's final text. Validates shape, not content."""
-    if not text.strip():
-        return None
-    raw = _extract_json_blob(text)
-    if raw is None:
-        return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
+    payload = parse_json_object(text)
+    if payload is None:
         return None
     # Required fields with sane defaults; the agent will still enforce its denylist
     # on whatever files_touched comes back, so we don't over-validate here.
@@ -534,18 +530,6 @@ def _parse_fix_proposal(text: str) -> dict | None:
     if not all(isinstance(p, str) for p in payload["files_touched"]):
         return None
     return payload
-
-
-def _extract_json_blob(text: str) -> str | None:
-    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fence:
-        return fence.group(1).strip()
-    indices = [(text.find(ch), ch) for ch in "[{"]
-    valid = [(i, ch) for i, ch in indices if i != -1]
-    if not valid:
-        return None
-    valid.sort()
-    return text[valid[0][0]:].strip()
 
 
 def _default_artifact_root() -> Path:

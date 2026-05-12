@@ -28,8 +28,6 @@ safety:
   max_duration_seconds: 120
   allow_multi_fault: false
   require_namespace_annotation: true
-  abort_slo_query: 'sum(rate(http_requests_total{code=~"5.."}[1m])) / sum(rate(http_requests_total[1m]))'
-  abort_slo_threshold: 0.5
 
 budget:
   soft_cap_usd: 1.0

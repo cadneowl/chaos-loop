@@ -21,7 +21,6 @@ class FaultDef:
     description: str
     requires_approval: bool
     chaos_mesh_kind: str | None  # None means custom (not a native CRD)
-    docs_anchor: str  # heading in SECURITY_CHAOS.md or ARCHITECTURE.md
 
 
 CATALOGUE: dict[str, FaultDef] = {
@@ -32,7 +31,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Kill one or more pods matching a selector.",
         requires_approval=False,
         chaos_mesh_kind="PodChaos",
-        docs_anchor="pod-faults",
     ),
     "pod.failure": FaultDef(
         name="pod.failure",
@@ -40,7 +38,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Continuously crash a pod for the duration.",
         requires_approval=False,
         chaos_mesh_kind="PodChaos",
-        docs_anchor="pod-faults",
     ),
     "network.loss": FaultDef(
         name="network.loss",
@@ -48,7 +45,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Packet loss between source pods and a target.",
         requires_approval=False,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="network-faults",
     ),
     "network.delay": FaultDef(
         name="network.delay",
@@ -56,7 +52,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Inject latency on egress from source pods to a target.",
         requires_approval=False,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="network-faults",
     ),
     "network.partition": FaultDef(
         name="network.partition",
@@ -64,7 +59,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Drop all traffic between two sets of pods (split-brain).",
         requires_approval=True,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="network-faults",
     ),
     "io.latency": FaultDef(
         name="io.latency",
@@ -72,7 +66,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Delay file system I/O on a mount.",
         requires_approval=False,
         chaos_mesh_kind="IOChaos",
-        docs_anchor="io-faults",
     ),
     "stress.cpu": FaultDef(
         name="stress.cpu",
@@ -80,7 +73,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Saturate CPU on target pods.",
         requires_approval=False,
         chaos_mesh_kind="StressChaos",
-        docs_anchor="stress-faults",
     ),
     "stress.memory": FaultDef(
         name="stress.memory",
@@ -88,7 +80,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Consume memory on target pods (may trigger OOM).",
         requires_approval=True,
         chaos_mesh_kind="StressChaos",
-        docs_anchor="stress-faults",
     ),
     "dns.error": FaultDef(
         name="dns.error",
@@ -96,7 +87,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="DNS resolution failures for a domain pattern.",
         requires_approval=False,
         chaos_mesh_kind="DNSChaos",
-        docs_anchor="dns-faults",
     ),
     "http.abort": FaultDef(
         name="http.abort",
@@ -104,7 +94,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Abort matching HTTP requests at the proxy.",
         requires_approval=False,
         chaos_mesh_kind="HTTPChaos",
-        docs_anchor="http-faults",
     ),
     "time.skew": FaultDef(
         name="time.skew",
@@ -112,7 +101,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Shift the clock inside target pods.",
         requires_approval=False,
         chaos_mesh_kind="TimeChaos",
-        docs_anchor="time-faults",
     ),
     # ---- security-flavored ----
     "cert.revoke": FaultDef(
@@ -121,7 +109,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Block OCSP/CRL endpoints + simulate cert revocation.",
         requires_approval=False,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="security-faults",
     ),
     "cert.expire": FaultDef(
         name="cert.expire",
@@ -129,7 +116,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Time-skew target pods past cert NotAfter.",
         requires_approval=False,
         chaos_mesh_kind="TimeChaos",
-        docs_anchor="security-faults",
     ),
     "tls.downgrade": FaultDef(
         name="tls.downgrade",
@@ -137,7 +123,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Force TLS 1.0 / plaintext via proxy rewrites; expect refusal.",
         requires_approval=True,
         chaos_mesh_kind="HTTPChaos",
-        docs_anchor="security-faults",
     ),
     "auth.outage": FaultDef(
         name="auth.outage",
@@ -145,7 +130,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Block egress to the IdP; expect fail-closed behavior.",
         requires_approval=True,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="security-faults",
     ),
     "auth.latency": FaultDef(
         name="auth.latency",
@@ -153,7 +137,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Inject latency on the IdP path; expect no side-channels.",
         requires_approval=False,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="security-faults",
     ),
     "secret.rotate": FaultDef(
         name="secret.rotate",
@@ -161,7 +144,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Patch a Secret mid-flight; expect graceful reload, no leak.",
         requires_approval=False,
         chaos_mesh_kind=None,
-        docs_anchor="security-faults",
     ),
     "image.swap_vuln": FaultDef(
         name="image.swap_vuln",
@@ -169,7 +151,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Deploy a known-vulnerable image; expect admission rejection.",
         requires_approval=True,
         chaos_mesh_kind=None,
-        docs_anchor="security-faults",
     ),
     "image.swap_unsigned": FaultDef(
         name="image.swap_unsigned",
@@ -177,7 +158,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Deploy an unsigned image; expect admission rejection (cosign).",
         requires_approval=True,
         chaos_mesh_kind=None,
-        docs_anchor="security-faults",
     ),
     "iam.degrade": FaultDef(
         name="iam.degrade",
@@ -185,7 +165,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Partial loss on STS / cloud IAM endpoints.",
         requires_approval=True,
         chaos_mesh_kind="NetworkChaos",
-        docs_anchor="security-faults",
     ),
     "netpol.regress": FaultDef(
         name="netpol.regress",
@@ -193,7 +172,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Remove a NetworkPolicy; expect app-layer enforcement to hold.",
         requires_approval=True,
         chaos_mesh_kind=None,
-        docs_anchor="security-faults",
     ),
     "egress.exfil_sim": FaultDef(
         name="egress.exfil_sim",
@@ -201,7 +179,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Curl to controlled sink resembling exfil; expect runtime alert.",
         requires_approval=True,
         chaos_mesh_kind=None,
-        docs_anchor="security-faults",
     ),
     "runtime.tamper": FaultDef(
         name="runtime.tamper",
@@ -209,7 +186,6 @@ CATALOGUE: dict[str, FaultDef] = {
         description="Write to rootfs in a running container; expect runtime alert.",
         requires_approval=True,
         chaos_mesh_kind=None,
-        docs_anchor="security-faults",
     ),
 }
 

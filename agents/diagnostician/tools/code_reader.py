@@ -123,13 +123,30 @@ class TargetCodeReader:
                 )
             return path.read_text(encoding="utf-8", errors="replace")
 
-        # Line range mode. Always 1-indexed inclusive on both ends.
+        # Line range mode. Always 1-indexed inclusive on both ends. We stream
+        # the file instead of slurping so a multi-GB file with a 10-line
+        # request doesn't OOM the process.
         ls = max(1, line_start or 1)
         le = line_end or 10**9
         if le < ls:
             raise CodeReadError(f"line_end ({le}) < line_start ({ls})")
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-        return "".join(lines[ls - 1 : le])
+        # Cap the slurped bytes even in streaming mode to bound runaway lines.
+        max_chars = 1_000_000
+        collected: list[str] = []
+        total = 0
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f, start=1):
+                if i < ls:
+                    continue
+                if i > le:
+                    break
+                collected.append(line)
+                total += len(line)
+                if total > max_chars:
+                    raise CodeReadError(
+                        f"line range yielded > {max_chars} chars; narrow the range"
+                    )
+        return "".join(collected)
 
     def list_files(self, glob: str = "**/*") -> list[str]:
         """List files matching a glob, returned as paths relative to root.
