@@ -1,8 +1,8 @@
 # chaos — closed-loop, security-aware chaos engineering
 
-[![Tests](https://img.shields.io/badge/tests-458%20passing-brightgreen)](#test-status)
-[![mypy](https://img.shields.io/badge/mypy-strict-blue)](#test-status)
-[![ruff](https://img.shields.io/badge/ruff-clean-blue)](#test-status)
+[![CI](https://github.com/cadneowl/chaos-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/cadneowl/chaos-loop/actions/workflows/ci.yml)
+[![mypy](https://img.shields.io/badge/mypy-strict-blue)](pyproject.toml)
+[![ruff](https://img.shields.io/badge/ruff-clean-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 <p align="center">

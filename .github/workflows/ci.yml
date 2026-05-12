@@ -12,6 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Opt into Node 24 for the JS actions. GitHub deprecated Node 20 in
+# September 2025 and forces Node 24 from June 2nd 2026; this gets us
+# ahead of the forced switch without a noisy deprecation warning.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   lint-type-test:
     name: ruff · mypy · pytest
