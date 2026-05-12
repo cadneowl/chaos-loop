@@ -52,19 +52,41 @@ def _store(db: Path | None) -> ExperimentStore:
 def run(
     plan_path: Path = typer.Argument(..., exists=True, readable=True),
     dry_run: bool = typer.Option(False, "--dry-run", help="Use mock agents (no external deps)."),
+    profile: str = typer.Option(
+        "static",
+        "--profile",
+        help=(
+            "Cognitive strategy mix: static (no LLM, $0), "
+            "hybrid (Static + LLM, falls back to Static), or llm (full LLM)."
+        ),
+    ),
     db: Path | None = typer.Option(None, "--db", help="SQLite path."),
     prom_url: str | None = typer.Option(None, "--prom-url", envvar="PROM_URL"),
     loki_url: str | None = typer.Option(None, "--loki-url", envvar="LOKI_URL"),
     target_repo_path: str | None = typer.Option(
         None, "--target-repo-path", envvar="TARGET_REPO_PATH"
     ),
+    model: str = typer.Option(
+        "claude-opus-4-7",
+        "--model",
+        envvar="CHAOS_LLM_MODEL",
+        help="LLM identifier for hybrid/llm profiles (e.g. 'ollama/qwen2.5-coder:14b').",
+    ),
+    api_base: str | None = typer.Option(
+        None,
+        "--api-base",
+        envvar="CHAOS_LLM_API_BASE",
+        help="Override LLM API base (e.g. 'http://localhost:11434' for Ollama).",
+    ),
 ) -> None:
     """Execute one experiment from YAML.
 
-    --dry-run uses mock agents. Without it, real agents are constructed from
-    env / flags. The LLM-driven strategies (diagnoser, fixer) are stubs that
-    will raise NotImplementedError until M5.x / M6.x; the loop will fail with
-    a clear message at that point.
+    Profiles:
+      static  - no LLM, deterministic, free. Default.
+      hybrid  - Static (always) + LLM (augmenting). Falls back to Static if LLM fails.
+      llm     - LLM everywhere. Requires --model + (for non-Anthropic) --api-base.
+
+    --dry-run uses mock agents; ignores profile.
     """
     plan = _load_plan(plan_path)
     store = _store(db)
@@ -84,14 +106,19 @@ def run(
         }
         agents = Agents(**wrapped)  # type: ignore[arg-type]
     else:
-        from agents._factory import AgentConfig, build_real_agents
+        from agents._factory import AgentConfig, AgentConfigError, build_real_agents
 
         cfg = AgentConfig(
             prom_url=prom_url,
             loki_url=loki_url,
             target_repo_path=target_repo_path,
+            model=model,
+            api_base=api_base,
         )
-        agents = build_real_agents(cfg, harness=harness)
+        try:
+            agents = build_real_agents(cfg, profile=profile, harness=harness)  # type: ignore[arg-type]
+        except AgentConfigError as e:
+            raise typer.BadParameter(str(e)) from e
 
     runner = ExperimentRunner(agents=agents, store=store, harness=harness)
     record = asyncio.run(runner.run(plan))

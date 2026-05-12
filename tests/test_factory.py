@@ -28,6 +28,119 @@ def test_build_real_agents_produces_real_classes() -> None:
     assert isinstance(agents.fixer, ClaudeFixerAgent)
 
 
+# --------------------------------------------------------------------------- #
+# Profile selection                                                           #
+# --------------------------------------------------------------------------- #
+
+
+def test_profile_static_wires_static_strategies_everywhere() -> None:
+    """profile=static -> StaticHypothesizer / StaticDiagnoser / StaticFixerStrategy."""
+    from agents.diagnostician.diagnoser import StaticDiagnoser
+    from agents.fixer.strategy import StaticFixerStrategy
+    from agents.tester.hypothesizer import StaticHypothesizer
+
+    agents = build_real_agents(AgentConfig(), profile="static")
+    assert isinstance(agents.tester._hypothesizer, StaticHypothesizer)  # type: ignore[attr-defined]
+    assert isinstance(agents.diagnostician._diagnoser, StaticDiagnoser)  # type: ignore[attr-defined]
+    assert isinstance(agents.fixer._strategy, StaticFixerStrategy)  # type: ignore[attr-defined]
+
+
+def test_profile_hybrid_wires_hybrid_wrappers_everywhere() -> None:
+    """profile=hybrid -> Hybrid* wrappers that wrap Static + LLM."""
+    from agents.diagnostician.diagnoser import HybridDiagnoser
+    from agents.fixer.strategy import HybridFixerStrategy
+    from agents.tester.hypothesizer import HybridHypothesizer
+
+    agents = build_real_agents(AgentConfig(), profile="hybrid")
+    assert isinstance(agents.tester._hypothesizer, HybridHypothesizer)  # type: ignore[attr-defined]
+    assert isinstance(agents.diagnostician._diagnoser, HybridDiagnoser)  # type: ignore[attr-defined]
+    assert isinstance(agents.fixer._strategy, HybridFixerStrategy)  # type: ignore[attr-defined]
+
+
+def test_profile_llm_wires_claude_strategies_everywhere() -> None:
+    """profile=llm -> ClaudeHypothesizer / ClaudeDiagnoser / ClaudeFixerStrategy."""
+    from agents.diagnostician.diagnoser import ClaudeDiagnoser
+    from agents.fixer.strategy import ClaudeFixerStrategy
+    from agents.tester.hypothesizer import ClaudeHypothesizer
+
+    agents = build_real_agents(AgentConfig(), profile="llm")
+    assert isinstance(agents.tester._hypothesizer, ClaudeHypothesizer)  # type: ignore[attr-defined]
+    assert isinstance(agents.diagnostician._diagnoser, ClaudeDiagnoser)  # type: ignore[attr-defined]
+    assert isinstance(agents.fixer._strategy, ClaudeFixerStrategy)  # type: ignore[attr-defined]
+
+
+def test_profile_default_is_static() -> None:
+    """Default profile should be the safe / free one — no surprise LLM bills."""
+    from agents.tester.hypothesizer import StaticHypothesizer
+
+    agents = build_real_agents(AgentConfig())  # no profile=
+    assert isinstance(agents.tester._hypothesizer, StaticHypothesizer)  # type: ignore[attr-defined]
+
+
+def test_invalid_profile_raises() -> None:
+    """Typos at the boundary should fail loud, not silently fall back."""
+    import pytest as _pytest  # local alias
+
+    from agents._factory import AgentConfigError
+
+    with _pytest.raises(AgentConfigError, match="profile"):
+        build_real_agents(AgentConfig(), profile="not-a-profile")  # type: ignore[arg-type]
+
+
+def test_explicit_overrides_beat_profile() -> None:
+    """An explicit hypothesizer / diagnoser / strategy override wins over profile selection."""
+    from agents.diagnostician.diagnoser import FixtureDiagnoser as _FD
+    from agents.fixer.strategy import FixtureFixerStrategy as _FFS
+    from agents.tester.hypothesizer import FixtureHypothesizer as _FH
+
+    fh = _FH([])
+    fd = _FD([])
+    ffs = _FFS(FixerOutput(reasoning="x", files_touched=[]))
+    agents = build_real_agents(
+        AgentConfig(),
+        profile="hybrid",  # would normally produce Hybrid* — overrides win
+        hypothesizer=fh,
+        diagnoser=fd,
+        fixer_strategy=ffs,
+    )
+    assert agents.tester._hypothesizer is fh  # type: ignore[attr-defined]
+    assert agents.diagnostician._diagnoser is fd  # type: ignore[attr-defined]
+    assert agents.fixer._strategy is ffs  # type: ignore[attr-defined]
+
+
+def test_model_and_api_base_flow_through_to_llm_strategies() -> None:
+    """profile=llm picks up model + api_base from config and threads them
+    into the constructed Claude* strategies."""
+    from agents.diagnostician.diagnoser import ClaudeDiagnoser
+    from agents.fixer.strategy import ClaudeFixerStrategy
+    from agents.tester.hypothesizer import ClaudeHypothesizer
+
+    cfg = AgentConfig(model="ollama/qwen2.5-coder:14b", api_base="http://localhost:11434")
+    agents = build_real_agents(cfg, profile="llm")
+    h = agents.tester._hypothesizer  # type: ignore[attr-defined]
+    assert isinstance(h, ClaudeHypothesizer)
+    assert h.model == "ollama/qwen2.5-coder:14b"
+    assert h.api_base == "http://localhost:11434"
+
+    d = agents.diagnostician._diagnoser  # type: ignore[attr-defined]
+    assert isinstance(d, ClaudeDiagnoser)
+    assert d.model == "ollama/qwen2.5-coder:14b"
+    assert d.api_base == "http://localhost:11434"
+
+    fs = agents.fixer._strategy  # type: ignore[attr-defined]
+    assert isinstance(fs, ClaudeFixerStrategy)
+    assert fs.model == "ollama/qwen2.5-coder:14b"
+    assert fs.api_base == "http://localhost:11434"
+
+
+def test_agent_config_from_env_picks_up_model_and_api_base(monkeypatch) -> None:
+    monkeypatch.setenv("CHAOS_LLM_MODEL", "openai/gpt-4o")
+    monkeypatch.setenv("CHAOS_LLM_API_BASE", "https://api.example/")
+    cfg = AgentConfig.from_env()
+    assert cfg.model == "openai/gpt-4o"
+    assert cfg.api_base == "https://api.example/"
+
+
 def test_overrides_take_precedence_over_env() -> None:
     """Test override path: pass fixture backends directly."""
     prom = FixturePromBackend()
