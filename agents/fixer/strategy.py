@@ -248,6 +248,68 @@ class StaticFixerStrategy:
 
 
 # ---------------------------------------------------------------------------- #
+# Hybrid (Static + optional LLM)                                               #
+# ---------------------------------------------------------------------------- #
+
+
+import logging  # noqa: E402
+
+_log = logging.getLogger(__name__)
+
+
+class HybridFixerStrategy:
+    """LLM-first; fall back to Static on failure / empty output.
+
+    Differences from HybridHypothesizer / HybridDiagnoser: a fix proposal is
+    a single FixerOutput, not a list. We can't merge two proposals — we have
+    to pick one. The LLM produces better text when it works; Static is the
+    safety net.
+
+    Selection logic:
+        - If no LLM configured -> use Static
+        - LLM raises -> log + use Static
+        - LLM returns empty (no files_touched and no reasoning) -> use Static
+        - LLM returns something usable -> use it
+    """
+
+    def __init__(
+        self,
+        *,
+        static: FixerStrategy,
+        llm: FixerStrategy | None = None,
+    ) -> None:
+        self._static = static
+        self._llm = llm
+
+    async def propose(
+        self, *, diagnosis: DiagnosisReport, intended_action: FixAction
+    ) -> FixerOutput:
+        if self._llm is None:
+            return await self._static.propose(
+                diagnosis=diagnosis, intended_action=intended_action
+            )
+        try:
+            llm_out = await self._llm.propose(
+                diagnosis=diagnosis, intended_action=intended_action
+            )
+        except Exception as e:
+            _log.warning(
+                "HybridFixerStrategy: LLM raised %r; falling back to static", e,
+            )
+            return await self._static.propose(
+                diagnosis=diagnosis, intended_action=intended_action
+            )
+        if llm_out.files_touched or (llm_out.reasoning and llm_out.reasoning.strip()):
+            return llm_out
+        _log.warning(
+            "HybridFixerStrategy: LLM returned empty output; falling back to static"
+        )
+        return await self._static.propose(
+            diagnosis=diagnosis, intended_action=intended_action
+        )
+
+
+# ---------------------------------------------------------------------------- #
 # Claude-backed implementation                                                 #
 # ---------------------------------------------------------------------------- #
 

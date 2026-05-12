@@ -248,6 +248,102 @@ def _issue_to_hypothesis(detector_name: str, issue, cfg: dict) -> Hypothesis:
 
 
 # ---------------------------------------------------------------------------- #
+# Hybrid (Static + optional LLM)                                               #
+# ---------------------------------------------------------------------------- #
+
+
+import logging  # noqa: E402 — import here keeps the LLM section above clean
+
+_log = logging.getLogger(__name__)
+
+
+class HybridHypothesizer:
+    """Run Static (always) + an optional LLM hypothesizer; merge their output.
+
+    The point: Static gives a free, reliable baseline; the LLM augments with
+    novel patterns the rules don't catch. If the LLM is missing or fails, we
+    silently degrade to Static-only — the loop never breaks because of an
+    optional augmentation.
+
+    Merge: a Hypothesis is "duplicate" if it shares ``proposed_fault`` AND any
+    overlapping ``code_references`` with another. We keep the higher-confidence
+    version of each duplicate group.
+    """
+
+    def __init__(
+        self,
+        *,
+        static: Hypothesizer,
+        llm: Hypothesizer | None = None,
+    ) -> None:
+        self._static = static
+        self._llm = llm
+
+    async def generate(
+        self,
+        *,
+        target_app: str,
+        target_repo: str | None,
+        code: TargetCodeReader | None,
+    ) -> list[Hypothesis]:
+        static_hyps = await self._static.generate(
+            target_app=target_app, target_repo=target_repo, code=code
+        )
+        if self._llm is None:
+            return static_hyps
+        try:
+            llm_hyps = await self._llm.generate(
+                target_app=target_app, target_repo=target_repo, code=code
+            )
+        except Exception as e:
+            _log.warning(
+                "HybridHypothesizer: LLM raised %r; returning %d static hypothesis(es)",
+                e, len(static_hyps),
+            )
+            return static_hyps
+        return _merge_hypotheses(static_hyps, llm_hyps)
+
+
+def _merge_hypotheses(
+    a: list[Hypothesis], b: list[Hypothesis]
+) -> list[Hypothesis]:
+    """Combine two hypothesis lists. Duplicates collapse to the higher-confidence
+    version. Non-duplicates are all kept.
+
+    Two hypotheses are duplicates iff they share ``proposed_fault`` AND have any
+    overlap in ``code_references``. (Same fault on a different file -> distinct.)
+    """
+    merged: list[Hypothesis] = []
+    for cand in [*a, *b]:
+        replaced = False
+        for i, existing in enumerate(merged):
+            if not _are_duplicates(existing, cand):
+                continue
+            # Same finding from a different source — keep whichever is more confident.
+            if cand.confidence > existing.confidence:
+                merged[i] = cand
+            replaced = True
+            break
+        if not replaced:
+            merged.append(cand)
+    merged.sort(key=lambda h: h.confidence, reverse=True)
+    return merged
+
+
+def _are_duplicates(x: Hypothesis, y: Hypothesis) -> bool:
+    if x.proposed_fault != y.proposed_fault:
+        return False
+    xrefs = {_normalize_ref(r) for r in x.code_references}
+    yrefs = {_normalize_ref(r) for r in y.code_references}
+    return bool(xrefs & yrefs)
+
+
+def _normalize_ref(ref: str) -> str:
+    """Compare references like 'src/x.py:42-55' and 'src/x.py:42' as the same file."""
+    return ref.replace("\\", "/").split(":", 1)[0]
+
+
+# ---------------------------------------------------------------------------- #
 # Claude-backed implementation                                                 #
 # ---------------------------------------------------------------------------- #
 

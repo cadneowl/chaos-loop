@@ -332,6 +332,98 @@ def _extract_paths(request: DiagnosisRequest) -> list[str]:
 
 
 # ---------------------------------------------------------------------------- #
+# Hybrid (Static + optional LLM)                                               #
+# ---------------------------------------------------------------------------- #
+
+
+import logging  # noqa: E402
+
+_log = logging.getLogger(__name__)
+
+
+class HybridDiagnoser:
+    """Run StaticDiagnoser (always) + optional LLM diagnoser; merge their output.
+
+    Same shape as HybridHypothesizer. Static gives a free, rule-based baseline;
+    the LLM adds reasoning over logs/code that rules can't capture. On LLM
+    failure we degrade to Static-only.
+
+    Merge: a hypothesis is "duplicate" if it shares ``suggested_fix_class`` AND
+    has overlapping ``affected_paths`` (or both have no affected_paths). Keep
+    the higher-confidence version.
+    """
+
+    def __init__(
+        self,
+        *,
+        static: Diagnoser,
+        llm: Diagnoser | None = None,
+        max_hypotheses: int = 5,
+    ) -> None:
+        self._static = static
+        self._llm = llm
+        self.max_hypotheses = max_hypotheses
+
+    async def diagnose(
+        self,
+        *,
+        request: DiagnosisRequest,
+        loki: LokiBackend | None = None,
+        prom: PromBackend | None = None,
+        code: TargetCodeReader | None = None,
+    ) -> list[RootCauseHypothesis]:
+        static_hyps = await self._static.diagnose(
+            request=request, loki=loki, prom=prom, code=code
+        )
+        if self._llm is None:
+            return static_hyps[: self.max_hypotheses]
+        try:
+            llm_hyps = await self._llm.diagnose(
+                request=request, loki=loki, prom=prom, code=code
+            )
+        except Exception as e:
+            _log.warning(
+                "HybridDiagnoser: LLM raised %r; returning %d static hypothesis(es)",
+                e, len(static_hyps),
+            )
+            return static_hyps[: self.max_hypotheses]
+        return _merge_root_cause_hypotheses(static_hyps, llm_hyps)[: self.max_hypotheses]
+
+
+def _merge_root_cause_hypotheses(
+    a: list[RootCauseHypothesis], b: list[RootCauseHypothesis]
+) -> list[RootCauseHypothesis]:
+    """Merge two RootCauseHypothesis lists. Higher confidence wins on duplicates."""
+    merged: list[RootCauseHypothesis] = []
+    for cand in [*a, *b]:
+        replaced = False
+        for i, existing in enumerate(merged):
+            if not _are_root_cause_duplicates(existing, cand):
+                continue
+            if cand.confidence > existing.confidence:
+                merged[i] = cand
+            replaced = True
+            break
+        if not replaced:
+            merged.append(cand)
+    merged.sort(key=lambda h: h.confidence, reverse=True)
+    return merged
+
+
+def _are_root_cause_duplicates(
+    x: RootCauseHypothesis, y: RootCauseHypothesis
+) -> bool:
+    if x.suggested_fix_class != y.suggested_fix_class:
+        return False
+    # Both empty paths -> consider duplicate (same fix class, no specific file).
+    xp = {p.replace("\\", "/") for p in x.affected_paths}
+    yp = {p.replace("\\", "/") for p in y.affected_paths}
+    if not xp and not yp:
+        return True
+    return bool(xp & yp)
+
+
+# ---------------------------------------------------------------------------- #
 # Claude-backed implementation                                                 #
 # ---------------------------------------------------------------------------- #
 
