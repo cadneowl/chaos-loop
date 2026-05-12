@@ -1,0 +1,96 @@
+<section class="page">
+  <a routerLink="/experiments" class="back">← all experiments</a>
+
+  @if (record.isLoading()) {
+    <p class="empty">Loading…</p>
+  } @else if (record.error()) {
+    <p class="empty error">
+      Failed to load this experiment. Is the orchestrator's SQLite store
+      reachable? Check the API server logs.
+    </p>
+  } @else if (!record.value()) {
+    <p class="empty error">Experiment not found.</p>
+  } @else {
+    <header>
+      <h2>{{ record.value()!.plan.title }}</h2>
+      <code class="experiment-id">{{ record.value()!.experiment_id }}</code>
+    </header>
+
+    <section class="overview">
+      <dl>
+        <dt>state</dt>
+        <dd>{{ record.value()!.state }}</dd>
+        <dt>target_app</dt>
+        <dd>{{ record.value()!.plan.target_app }}</dd>
+        <dt>started_at</dt>
+        <dd>{{ record.value()!.started_at | date: 'medium' }}</dd>
+        <dt>finished_at</dt>
+        <dd>
+          @if (record.value()!.finished_at) {
+            {{ record.value()!.finished_at | date: 'medium' }}
+          } @else { — }
+        </dd>
+        <dt>spend</dt>
+        <dd>${{ totalSpend() | number: '1.2-2' }}</dd>
+        <dt>tokens (prompt / completion / total)</dt>
+        <dd>
+          {{ totalTokens().prompt }} / {{ totalTokens().completion }} /
+          {{ totalTokens().total }}
+        </dd>
+        @if (record.value()!.abort_reason) {
+          <dt>abort_reason</dt>
+          <dd>{{ record.value()!.abort_reason }}</dd>
+        }
+      </dl>
+    </section>
+
+    @if (invocations().length > 0) {
+      <section class="invocations">
+        <h3>agent invocations</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>agent</th>
+              <th>method</th>
+              <th>duration</th>
+              <th>spend</th>
+              <th>tokens (in / out)</th>
+              <th>tool calls</th>
+              <th>status</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (inv of invocations(); track inv.started_at_ms) {
+              <tr [class.failed]="!inv.ok">
+                <td>{{ inv.agent }}</td>
+                <td>{{ inv.method }}</td>
+                <td>
+                  @if (inv.duration_ms !== null && inv.duration_ms !== undefined) {
+                    {{ inv.duration_ms | number: '1.0-0' }}ms
+                  } @else { — }
+                </td>
+                <td>
+                  @if (inv.spend_usd !== null && inv.spend_usd !== undefined) {
+                    ${{ inv.spend_usd | number: '1.4-4' }}
+                  } @else { — }
+                </td>
+                <td>
+                  {{ inv.prompt_tokens ?? '—' }} / {{ inv.completion_tokens ?? '—' }}
+                </td>
+                <td>{{ inv.tool_calls.length }}</td>
+                <td>
+                  @if (inv.ok) { ✓ } @else { ✕ {{ inv.error }} }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </section>
+    }
+
+    <details class="raw-record">
+      <summary>raw ExperimentRecord (JSON)</summary>
+      <pre>{{ record.value() | json }}</pre>
+    </details>
+  }
+</section>

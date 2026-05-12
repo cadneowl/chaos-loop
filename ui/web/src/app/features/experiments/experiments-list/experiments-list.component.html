@@ -1,0 +1,69 @@
+<section class="page">
+  <header class="page-header">
+    <h2>Experiments</h2>
+    <div class="filters" role="group" aria-label="Filter by state">
+      @for (option of stateOptions; track option) {
+        <button
+          type="button"
+          [class.active]="stateFilter() === option"
+          [attr.aria-pressed]="stateFilter() === option"
+          (click)="setFilter(option)"
+        >
+          {{ option }}
+        </button>
+      }
+    </div>
+  </header>
+
+  @if (experiments.isLoading()) {
+    <p class="empty">Loading…</p>
+  } @else if (experiments.error()) {
+    <p class="empty error">Couldn't reach the API. Is the server running?</p>
+  } @else if (!hasResults()) {
+    <p class="empty">No experiments match the current filter.</p>
+  } @else {
+    <table>
+      <thead>
+        <tr>
+          <th>experiment_id</th>
+          <th>title</th>
+          <th>target_app</th>
+          <th>state</th>
+          <th>started</th>
+          <th>duration</th>
+          <th>spend</th>
+          <th>fault</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of experiments.value()!.results; track row.experiment_id) {
+          <tr>
+            <td>
+              <a [routerLink]="['/experiments', row.experiment_id]">
+                {{ row.experiment_id }}
+              </a>
+            </td>
+            <td>{{ row.title }}</td>
+            <td>{{ row.target_app }}</td>
+            <td>
+              <span [class]="stateBadgeClass(row.state)">{{ row.state }}</span>
+            </td>
+            <td>{{ row.started_at | date: 'short' }}</td>
+            <td>
+              @if (row.duration_seconds !== null) {
+                {{ row.duration_seconds | number: '1.0-1' }}s
+              } @else {
+                —
+              }
+            </td>
+            <td>${{ row.spend_usd | number: '1.2-2' }}</td>
+            <td>{{ row.primary_fault ?? '—' }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    <p class="count">
+      {{ experiments.value()!.results.length }} of {{ experiments.value()!.total }}
+    </p>
+  }
+</section>
