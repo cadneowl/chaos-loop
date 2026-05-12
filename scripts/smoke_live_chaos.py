@@ -14,7 +14,7 @@ This is NOT a pytest test — it requires a live cluster + Chaos Mesh.
 Usage:
     python scripts/smoke_live_chaos.py \\
         --context kind-chaos-dev \\
-        --kubectl "wsl -d Ubuntu-24.04 -- /home/cad/.local/bin/kubectl"
+        --kubectl "wsl -d Ubuntu-24.04 -- /home/<user>/.local/bin/kubectl"
 
 The ``--kubectl`` flag is the invocation prefix (shlex-split). Plain
 ``kubectl`` works when kubectl is on PATH and the kubeconfig is set.
@@ -239,7 +239,7 @@ def main() -> int:
         default="kubectl",
         help=(
             "kubectl invocation prefix (shlex-split). "
-            "Example for WSL: 'wsl -d Ubuntu-24.04 -- /home/cad/.local/bin/kubectl'"
+            "Example for WSL: 'wsl -d Ubuntu-24.04 -- /home/<user>/.local/bin/kubectl'"
         ),
     )
     args = parser.parse_args()

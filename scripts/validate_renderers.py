@@ -117,7 +117,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         default="kubectl",
         help=(
             "kubectl invocation prefix (space-separated). "
-            "Example for WSL: 'wsl -d Ubuntu-24.04 -- /home/cad/.local/bin/kubectl'"
+            "Example for WSL: 'wsl -d Ubuntu-24.04 -- /home/<user>/.local/bin/kubectl'"
         ),
     )
     args = parser.parse_args(list(argv) if argv is not None else None)

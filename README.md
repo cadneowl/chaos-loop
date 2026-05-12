@@ -47,7 +47,7 @@ can't*.
   - [Pattern-match detectors](#pattern-match-detectors)
   - [Hybrid merge algorithm](#hybrid-merge-algorithm)
   - [Safety gates](#safety-gates)
-  - [Budget tracking](#budget-tracking)
+  - [The meta-harness: how every AI call is controlled](#the-meta-harness-how-every-ai-call-is-controlled)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Operating the system](#operating-the-system)
@@ -281,19 +281,69 @@ Plus continuous budget enforcement (see next section).
 See [docs/SAFETY.md](docs/SAFETY.md) for the full safety model + approval
 modes for `requires_approval` faults.
 
-### Budget tracking
+### The meta-harness: how every AI call is controlled
 
-Every LLM call routes through `agents._llm.complete_with_tools`, which
-extracts the per-call `response_cost` and pushes it to a per-task
-`ContextVar` set by the meta-harness wrapper. The orchestrator reads the
-sum from `Harness.invocations` after every agent call and:
+LLMs are the cognitive surface of the system; they are also the surface
+that costs money, leaks data, hallucinates, and can loop. Every call into
+an LLM-backed agent passes through a **meta-harness** wrapper
+(`agents/_harness.py`) that gives the orchestrator one place to enforce
+control properties across all five agents.
 
-- Logs a one-time warning at `soft_cap_usd`
-- Aborts with `BUDGET_EXCEEDED` at `hard_cap_usd` or `wall_clock_seconds`
-- Persists `spend_usd` on every `ExperimentRecord` save
+The wrapper is a `__getattr__` proxy — calling `harness.instrument(name,
+agent)` returns a transparent stand-in that satisfies the same Protocol as
+the underlying agent. Sync attribute reads pass through; coroutine methods
+get instrumented. Wrapped agents are **read-only**: `__setattr__` raises,
+so a misbehaving caller can't mutate state on the wrapped instance.
 
-Local Ollama runs report cost as 0 (LiteLLM has no pricing data), so
-spend tracking gracefully no-ops for free-tier setups.
+What the wrapper does on every async method invocation:
+
+| Concern | How the harness handles it |
+|---|---|
+| **Observability** | Logs entry / exit / duration / error / one-line input + output summaries — at INFO on success, WARNING on raise. |
+| **Audit trail** | Builds an `AgentInvocation` record and appends it to `Harness.invocations`. The orchestrator attaches the full list to `ExperimentRecord.agent_invocations` before every SQLite save, so a crash mid-run still leaves a forensic trail. |
+| **Cost attribution** | Sets a per-task `ContextVar` to the current `AgentInvocation`. When the agent's strategy calls `complete_with_tools`, that function reads the ContextVar and credits the call's `response_cost` to the invocation that triggered it — no harness reference plumbed through three constructors. |
+| **Budget enforcement** | After every step in the loop, the orchestrator sums `inv.spend_usd` across `harness.invocations`, persists it on the record, logs once at `soft_cap_usd`, aborts with `BUDGET_EXCEEDED` at `hard_cap_usd` or `wall_clock_seconds`. |
+| **Error propagation** | Exceptions ALWAYS propagate. The harness records the error string for the audit log but does **not** swallow. A failing agent fails the experiment — silent partial success is not allowed. |
+| **No mutation** | `_Wrapped.__setattr__` blocks writes to the proxy itself; wrapped agents are conceptually frozen views. |
+
+The end-to-end LLM-cost flow looks like this:
+
+```
+ExperimentRunner.run()
+    └─ awaits  harness_wrapped_tester.hypothesize(req)        ← proxy
+                  └─ ContextVar.set(AgentInvocation)
+                  └─ awaits  inner_tester.hypothesize(req)
+                                └─ awaits  ClaudeHypothesizer.generate(...)
+                                              └─ awaits  complete_with_tools(...)
+                                                            └─ for each turn:
+                                                                  └─ litellm.acompletion()
+                                                                  └─ cost = response.usage.cost
+                                                                  └─ record_llm_spend(cost)
+                                                                        └─ inv.spend_usd += cost   ← ContextVar
+                  └─ records AgentInvocation in Harness.invocations
+    └─ budget.spent_usd = sum(inv.spend_usd for inv in harness.invocations)
+    └─ if budget.hard_exceeded(): abort
+```
+
+Why this matters in practice:
+
+- The **orchestrator never sees an LLM call directly**. It only sees
+  agent invocations through Protocol interfaces. The harness is the
+  border control.
+- **Adding a new agent** doesn't require any harness change — just
+  `harness.instrument("new-agent", instance)` and it gets the same
+  observability / audit / cost / budget enforcement.
+- **The control properties hold even when the agent calls multiple
+  LLMs.** The ContextVar pattern means N nested `complete_with_tools`
+  calls all credit their cost to the one invocation that started the
+  outer agent method.
+- **Tests can drop the harness** entirely (Fixture* implementations
+  don't use LLMs anyway), or use it standalone to verify the invocation
+  log matches expectations. `tests/test_harness.py` does both.
+
+Local Ollama runs report cost as 0 (LiteLLM has no pricing data for
+self-hosted endpoints), so the budget path gracefully no-ops for
+free-tier setups — the observability + audit-trail properties still hold.
 
 ---
 

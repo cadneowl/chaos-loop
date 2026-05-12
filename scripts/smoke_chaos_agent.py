@@ -244,7 +244,7 @@ def main() -> int:
         default="kubectl",
         help=(
             "kubectl invocation prefix (shlex-split). "
-            "Example for WSL: 'wsl -d Ubuntu-24.04 -- /home/cad/.local/bin/kubectl'"
+            "Example for WSL: 'wsl -d Ubuntu-24.04 -- /home/<user>/.local/bin/kubectl'"
         ),
     )
     args = parser.parse_args()
