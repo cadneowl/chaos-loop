@@ -24,9 +24,10 @@ app = typer.Typer(help="Closed-loop chaos engineering orchestrator.", no_args_is
 console = Console()
 
 
-# Experiment states that are NOT terminal — abort applies to these.
-# Includes transient *_FAIL states because a crash between setting them and
-# the subsequent _abort() leaves a record stuck there.
+# Experiment states that are NOT terminal — abort/pause/resume apply to these.
+# Includes transient *_FAIL states (crash between mark + _abort can leave a
+# record stuck there) and PAUSED (paused experiments must be reachable by
+# subsequent abort / resume CLI calls).
 _LIVE_STATES: set[ExperimentState] = {
     ExperimentState.INITIALIZING,
     ExperimentState.BASELINE,
@@ -40,6 +41,7 @@ _LIVE_STATES: set[ExperimentState] = {
     ExperimentState.DIAGNOSE,
     ExperimentState.DIAGNOSED,
     ExperimentState.PROPOSE_FIX,
+    ExperimentState.PAUSED,
 }
 
 
@@ -184,15 +186,31 @@ def abort(
     all_: bool = typer.Option(False, "--all", help="Abort every non-terminal experiment"),
     reason: AbortReason = typer.Option(AbortReason.USER_KILL, "--reason"),
     detail: str = typer.Option("", "--detail"),
+    force: bool = typer.Option(
+        False, "--force",
+        help=(
+            "Directly mark ABORTED in the store without waiting for the "
+            "orchestrator to acknowledge. Use only for stale records "
+            "(orchestrator already gone)."
+        ),
+    ),
     db: Path | None = typer.Option(None, "--db"),
 ) -> None:
     """
-    Mark an experiment (or all live experiments) as aborted in the store.
+    Request that a running experiment abort.
 
-    Note: this updates the store only. Chaos Mesh CRDs are not deleted here —
-    call `agents.chaos.agent.ClaudeChaosAgent.cleanup()` programmatically, or
-    `kubectl delete <kind>chaos -l chaos.kosta.dev/experiment-id=<id>` to clean
-    the cluster.
+    Default behavior writes an abort signal to the store; the orchestrator's
+    control-poll picks it up at the next state-transition boundary and
+    transitions the run to ABORTED gracefully (with cleanup of in-flight
+    Chaos Mesh CRDs via the chaos agent's cleanup path).
+
+    With ``--force``, the record is directly marked ABORTED with no signal
+    to a running process — use only when you know no orchestrator is alive
+    to acknowledge.
+
+    Note: cluster-side cleanup of leftover Chaos Mesh CRDs after a forced
+    abort is your responsibility:
+        kubectl delete <kind>chaos -l chaos.kosta.dev/experiment-id=<id>
     """
     if not all_ and not experiment_id:
         raise typer.BadParameter("provide an experiment_id or pass --all")
@@ -202,7 +220,9 @@ def abort(
     store = _store(db)
     targets = []
     if all_:
-        targets = [r for r in store.recent(limit=200) if r.state in _LIVE_STATES]
+        # Don't truncate: a too-small `recent()` limit would silently skip
+        # live experiments past the cutoff. Ask the store directly.
+        targets = store.find_live(_LIVE_STATES)
     else:
         assert experiment_id is not None  # guarded by typer.BadParameter above
         record = store.load(experiment_id)
@@ -223,13 +243,81 @@ def abort(
     from datetime import UTC, datetime
     now = datetime.now(tz=UTC)
     for r in targets:
-        prior_state = r.state.value  # capture BEFORE mutating
-        r.state = ExperimentState.ABORTED
-        r.abort_reason = reason
-        r.abort_detail = detail or "manual abort"
-        r.finished_at = now
-        store.save(r)
-        console.print(f"aborted: {r.experiment_id} (was {prior_state})")
+        prior_state = r.state.value  # capture BEFORE any mutation
+        if force:
+            r.state = ExperimentState.ABORTED
+            r.abort_reason = reason
+            r.abort_detail = detail or "forced abort"
+            r.finished_at = now
+            store.save(r)
+            console.print(f"force-aborted: {r.experiment_id} (was {prior_state})")
+        else:
+            store.request_abort(r.experiment_id, reason)
+            console.print(
+                f"abort requested: {r.experiment_id} (currently {prior_state}); "
+                "the orchestrator will transition to ABORTED at the next state boundary"
+            )
+
+
+@app.command()
+def pause(
+    experiment_id: str = typer.Argument(..., help="Experiment ID to pause"),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """Request a graceful pause at the next state-transition boundary.
+
+    No effect on a terminal experiment (a clear message is printed and the
+    command exits 0). The orchestrator's control-poll picks up the flag
+    within ``pause_poll_interval_s`` seconds (1s by default).
+    """
+    store = _store(db)
+    record = store.load(experiment_id)
+    if record is None:
+        console.print(f"[red]no experiment {experiment_id} in store[/red]")
+        raise typer.Exit(code=1)
+    if record.state not in _LIVE_STATES:
+        console.print(
+            f"[yellow]{experiment_id} is in terminal state "
+            f"{record.state.value}; pause is a no-op[/yellow]"
+        )
+        return
+    if not store.set_pause(experiment_id, True):
+        console.print(f"[red]failed to set pause flag on {experiment_id}[/red]")
+        raise typer.Exit(code=1)
+    console.print(
+        f"pause requested: {experiment_id} (currently {record.state.value}); "
+        "the orchestrator will pause at the next state boundary"
+    )
+
+
+@app.command()
+def resume(
+    experiment_id: str = typer.Argument(..., help="Experiment ID to resume"),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """Clear the pause flag on a paused experiment.
+
+    The orchestrator's control-poll will see the cleared flag and continue
+    to the next state. If the experiment isn't actually paused (no flag set
+    and not in PAUSED state), prints a clear message instead of pretending.
+    """
+    store = _store(db)
+    record = store.load(experiment_id)
+    if record is None:
+        console.print(f"[red]no experiment {experiment_id} in store[/red]")
+        raise typer.Exit(code=1)
+    ctrl = store.load_control(experiment_id)
+    if not ctrl.pause_requested and record.state != ExperimentState.PAUSED:
+        console.print(
+            f"[yellow]{experiment_id} is not paused "
+            f"(state={record.state.value}, pause_requested={ctrl.pause_requested}); "
+            "nothing to resume[/yellow]"
+        )
+        return
+    if not store.set_pause(experiment_id, False):
+        console.print(f"[red]failed to clear pause flag on {experiment_id}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"pause cleared: {experiment_id}")
 
 
 @app.command(name="list-faults")

@@ -12,6 +12,7 @@ Protocol, the loop runs end-to-end without changes here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -87,10 +88,14 @@ class ExperimentRunner:
         store: ExperimentStore,
         *,
         harness: Any | None = None,  # agents._harness.Harness; typed loosely to avoid the import cycle
+        pause_poll_interval_s: float = 1.0,
     ) -> None:
         self.agents = agents
         self.store = store
         self.harness = harness
+        # How often we re-check the control flags while paused. Exposed for
+        # tests; production keeps the default 1s.
+        self.pause_poll_interval_s = pause_poll_interval_s
 
     async def run(self, plan: ExperimentPlan) -> ExperimentRecord:
         record = ExperimentRecord(
@@ -113,6 +118,8 @@ class ExperimentRunner:
                 return self._abort(record, fail.reason, fail.detail)
 
         # --- baseline -------------------------------------------------------
+        if fail := await self._check_control(record):
+            return self._abort(record, fail.reason, fail.detail)
         record.state = ExperimentState.BASELINE
         self.store.save(record)
 
@@ -143,6 +150,8 @@ class ExperimentRunner:
 
         if fail := self._check_budget_step(budget, record):
             return self._abort(record, fail.reason, fail.detail)
+        if fail := await self._check_control(record):
+            return self._abort(record, fail.reason, fail.detail)
 
         # --- inject ---------------------------------------------------------
         record.state = ExperimentState.INJECT
@@ -161,6 +170,8 @@ class ExperimentRunner:
             )
         record.state = ExperimentState.INJECTED
         self.store.save(record)
+        if fail := await self._check_control(record):
+            return self._abort(record, fail.reason, fail.detail)
 
         # --- verify ---------------------------------------------------------
         record.state = ExperimentState.VERIFY
@@ -198,11 +209,14 @@ class ExperimentRunner:
 
         if fail := self._check_budget_step(budget, record):
             return self._abort(record, fail.reason, fail.detail)
+        if fail := await self._check_control(record):
+            return self._abort(record, fail.reason, fail.detail)
 
         # --- diagnose -------------------------------------------------------
         record.state = ExperimentState.REGRESSED
         self.store.save(record)
         record.state = ExperimentState.DIAGNOSE
+        self.store.save(record)  # persist before the long-running agent call
         record.diagnosis = await self.agents.diagnostician.diagnose(
             DiagnosisRequest(
                 experiment_id=plan.experiment_id,
@@ -224,14 +238,56 @@ class ExperimentRunner:
 
         if fail := self._check_budget_step(budget, record):
             return self._abort(record, fail.reason, fail.detail)
+        if fail := await self._check_control(record):
+            return self._abort(record, fail.reason, fail.detail)
 
         # --- propose fix ----------------------------------------------------
         record.state = ExperimentState.PROPOSE_FIX
+        self.store.save(record)  # persist before the long-running agent call
         record.fix_proposal = await self.agents.fixer.propose_fix(record.diagnosis)
         record.state = ExperimentState.FIX_PROPOSED
         return self._finish(record)
 
     # ----- helpers ----------------------------------------------------------
+
+    async def _check_control(
+        self, record: ExperimentRecord
+    ) -> safety.GateFailure | None:
+        """Poll the operator's pause / abort signals.
+
+        Called between every state transition. Three outcomes:
+            - abort requested ⇒ returns GateFailure (USER_KILL or whatever
+              reason the operator set); caller routes to ``_abort``.
+            - pause requested ⇒ mutates record.state to PAUSED, persists,
+              sleeps ``pause_poll_interval_s`` and re-polls. Loops until
+              pause clears OR an abort arrives.
+            - neither ⇒ returns None. Caller proceeds.
+
+        While paused, the orchestrator does no work. Resume continues from
+        wherever the next state assignment lands — the PAUSED marker is
+        ephemeral, overwritten by the next state transition.
+        """
+        first_check = True
+        while True:
+            ctrl = self.store.load_control(record.experiment_id)
+            if ctrl.abort_requested:
+                return safety.GateFailure(
+                    ctrl.abort_reason or AbortReason.USER_KILL,
+                    "abort requested by operator",
+                )
+            if not ctrl.pause_requested:
+                return None
+            # Pause requested. On the first iteration, mark + persist.
+            if first_check:
+                log.info(
+                    "experiment %s pausing (was %s)",
+                    record.experiment_id, record.state.value,
+                )
+                record.state = ExperimentState.PAUSED
+                self._sync_spend(record)
+                self.store.save(record)
+                first_check = False
+            await asyncio.sleep(self.pause_poll_interval_s)
 
     def _check_budget_step(
         self, budget: BudgetTracker, record: ExperimentRecord
@@ -279,15 +335,20 @@ class ExperimentRunner:
     def _attach_invocations(self, record: ExperimentRecord) -> None:
         """Copy the latest harness invocations onto the record before each save.
 
-        Re-imports lazily to avoid a hard dep on the harness from the loop:
-        the orchestrator can run without one (tests/dry-run).
+        Uses ``dataclasses.asdict`` so nested dataclasses (``ToolCallRecord``)
+        flatten to plain dicts that Pydantic can validate into the contract
+        types (``ToolCallSummary``). Lazy import keeps the orchestrator
+        runnable without the harness (tests/dry-run).
         """
         if self.harness is None:
             return
+        from dataclasses import asdict
+
         from shared.contracts import AgentInvocationLog
 
         record.agent_invocations = [
-            AgentInvocationLog(**vars(inv)) for inv in self.harness.invocations
+            AgentInvocationLog.model_validate(asdict(inv))
+            for inv in self.harness.invocations
         ]
 
     def _abort(
@@ -304,6 +365,10 @@ class ExperimentRunner:
         self._attach_invocations(record)
         self._sync_spend(record)
         self.store.save(record)
+        # Clear any operator signals after the terminal save so a record
+        # never persists with `pause_requested=1` or `abort_requested=1`
+        # alongside a terminal state.
+        self.store.clear_control(record.experiment_id)
         return record
 
     def _finish(self, record: ExperimentRecord) -> ExperimentRecord:
@@ -312,6 +377,7 @@ class ExperimentRunner:
         self._attach_invocations(record)
         self._sync_spend(record)
         self.store.save(record)
+        self.store.clear_control(record.experiment_id)
         return record
 
     def _sync_spend(self, record: ExperimentRecord) -> None:

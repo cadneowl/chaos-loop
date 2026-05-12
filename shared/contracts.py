@@ -444,8 +444,23 @@ class ExperimentState(StrEnum):
     PROPOSE_FIX = "propose_fix"
     FIX_PROPOSED = "fix_proposed"
     FIX_DECLINED = "fix_declined"
+    PAUSED = "paused"
     ABORTED = "aborted"
     RECORDED = "recorded"
+
+
+class ToolCallSummary(BaseModel):
+    """Persistable view of one LLM tool call. Subset of agents._llm.ToolCallTrace.
+
+    Stored on AgentInvocationLog so the UI's per-call drill-down can show
+    which tools the model invoked, with what args, and what came back —
+    without the runtime callable handler.
+    """
+
+    name: str
+    arguments: str  # JSON-serialized as the model produced it (raw)
+    result_preview: str  # truncated to ~500 chars; full result lives in run logs
+    is_error: bool = False
 
 
 class AgentInvocationLog(BaseModel):
@@ -461,6 +476,13 @@ class AgentInvocationLog(BaseModel):
     input_summary: str = ""
     output_summary: str = ""
     spend_usd: float | None = None
+    # Sum across every LLM turn the agent triggered. None when no LLM was
+    # called or when the provider didn't report usage (e.g., self-hosted Ollama).
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    # Flat list of every tool call across every LLM turn the agent made.
+    # Empty when the agent didn't use tools (e.g., Static* strategies).
+    tool_calls: list[ToolCallSummary] = Field(default_factory=list)
 
 
 class ExperimentRecord(BaseModel):

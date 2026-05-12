@@ -35,6 +35,21 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
+class ToolCallRecord:
+    """In-memory mirror of `shared.contracts.ToolCallSummary`.
+
+    Lives in `_harness` so adding a tool-call attribution doesn't require
+    importing the contracts module from `_llm` — keeps the dep graph one-way:
+    `_llm` → `_harness`, never `_llm` → `shared.contracts`.
+    """
+
+    name: str
+    arguments: str
+    result_preview: str
+    is_error: bool = False
+
+
+@dataclass
 class AgentInvocation:
     """One coroutine call through the harness. Persisted to the experiment record."""
 
@@ -48,6 +63,9 @@ class AgentInvocation:
     input_summary: str = ""
     output_summary: str = ""
     spend_usd: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    tool_calls: list[ToolCallRecord] = field(default_factory=list)
 
 
 # Per-task slot pointing at the currently-running AgentInvocation. ``_llm`` reads
@@ -70,6 +88,39 @@ def record_llm_spend(usd: float) -> None:
     if inv is None:
         return
     inv.spend_usd = (inv.spend_usd or 0.0) + usd
+
+
+def record_llm_tokens(prompt: int | None, completion: int | None) -> None:
+    """Add prompt + completion token counts to the current invocation.
+
+    Either argument may be None (provider didn't report usage); we treat
+    None as "no data" so the field on the invocation stays None when no
+    LLM data was ever attributed. Reported zeroes (e.g., a streaming turn
+    that returned only a tool call) ARE accumulated — the count flips from
+    None to 0 on the first attribution and from 0 onwards from there.
+    """
+    inv = _current_invocation.get()
+    if inv is None:
+        return
+    if prompt is not None:
+        inv.prompt_tokens = (inv.prompt_tokens or 0) + prompt
+    if completion is not None:
+        inv.completion_tokens = (inv.completion_tokens or 0) + completion
+
+
+def record_llm_tool_calls(traces: list[ToolCallRecord]) -> None:
+    """Append a turn's tool calls to the current invocation.
+
+    No-op when no current invocation. The traces are stored as-given;
+    callers (`_llm.complete_with_tools`) are responsible for truncating
+    long results before recording so the SQLite blob stays compact.
+    """
+    if not traces:
+        return
+    inv = _current_invocation.get()
+    if inv is None:
+        return
+    inv.tool_calls.extend(traces)
 
 
 @dataclass

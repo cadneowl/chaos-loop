@@ -48,6 +48,20 @@ class ToolCallTrace:
 
 
 @dataclass
+class TokenUsage:
+    """Token counts for one or more LLM turns. None means provider didn't report."""
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    @property
+    def total_tokens(self) -> int | None:
+        if self.prompt_tokens is None and self.completion_tokens is None:
+            return None
+        return (self.prompt_tokens or 0) + (self.completion_tokens or 0)
+
+
+@dataclass
 class CompletionResult:
     """What `complete_with_tools` returned."""
 
@@ -55,6 +69,7 @@ class CompletionResult:
     turns: int
     tool_calls: list[ToolCallTrace] = field(default_factory=list)
     spend_usd: float | None = None
+    usage: TokenUsage = field(default_factory=TokenUsage)
     stopped_reason: str = "ok"
 
 
@@ -116,9 +131,18 @@ async def complete_with_tools(
     trace: list[ToolCallTrace] = []
     final_text = ""
     spend_usd: float | None = None
+    usage = TokenUsage()
     stopped_reason = "ok"
     last_call_signature: tuple[str, str] | None = None
     repeated_call_count = 0
+
+    # Lazy import — keeps non-LLM code paths free of the harness dep.
+    from agents._harness import (
+        ToolCallRecord,
+        record_llm_spend,
+        record_llm_tokens,
+        record_llm_tool_calls,
+    )
 
     turn = -1
     for turn in range(max_turns):  # noqa: B007 — turn used after loop for the count
@@ -138,9 +162,16 @@ async def complete_with_tools(
         cost = _extract_cost(resp)
         if cost is not None:
             spend_usd = (spend_usd or 0.0) + cost
-            # Attribute to the harness invocation that drove this call, if any.
-            from agents._harness import record_llm_spend
             record_llm_spend(cost)
+
+        # Token accounting (best-effort; Ollama returns None).
+        turn_prompt, turn_completion = _extract_tokens(resp)
+        if turn_prompt is not None:
+            usage.prompt_tokens = (usage.prompt_tokens or 0) + turn_prompt
+        if turn_completion is not None:
+            usage.completion_tokens = (usage.completion_tokens or 0) + turn_completion
+        if turn_prompt is not None or turn_completion is not None:
+            record_llm_tokens(turn_prompt, turn_completion)
 
         msg = resp.choices[0].message
         if msg.content:
@@ -152,9 +183,11 @@ async def complete_with_tools(
 
         # Append the assistant turn and process each tool call.
         messages.append(_assistant_message_with_tools(msg))
+        turn_records: list[ToolCallRecord] = []
         for tc in msg.tool_calls:
             entry = await _execute_one_tool(tc, tools_by_name)
             trace.append(entry)
+            turn_records.append(_tool_record_from_trace(entry))
             messages.append(
                 {
                     "role": "tool",
@@ -162,6 +195,7 @@ async def complete_with_tools(
                     "content": entry.result,
                 }
             )
+        record_llm_tool_calls(turn_records)
 
         # Loop-detection: smaller models sometimes call the same tool with the
         # same args repeatedly instead of answering. After N consecutive identical
@@ -199,6 +233,7 @@ async def complete_with_tools(
         turns=turn + 1,
         tool_calls=trace,
         spend_usd=spend_usd,
+        usage=usage,
         stopped_reason=stopped_reason,
     )
 
@@ -304,3 +339,60 @@ def _extract_cost(resp: Any) -> float | None:
         return float(val)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_tokens(resp: Any) -> tuple[int | None, int | None]:
+    """Pull (prompt_tokens, completion_tokens) from a LiteLLM response.
+
+    Self-hosted providers (Ollama) routinely omit usage; we return (None, None)
+    rather than zero so the harness can distinguish "no data" from "zero tokens".
+    """
+    usage = getattr(resp, "usage", None)
+    if usage is None:
+        return (None, None)
+    prompt = _safe_int(getattr(usage, "prompt_tokens", None))
+    completion = _safe_int(getattr(usage, "completion_tokens", None))
+    return (prompt, completion)
+
+
+def _safe_int(val: Any) -> int | None:
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+# Limit per-tool-result chars stored in the audit log. Tool results can be
+# large file dumps; the full bytes live in run logs, the truncated preview
+# is enough to drive the UI's drill-down.
+_TOOL_RESULT_PREVIEW_MAX = 500
+
+
+def _tool_record_from_trace(trace: ToolCallTrace) -> Any:
+    """Convert a ToolCallTrace (in-memory) into a ToolCallRecord (persistable).
+
+    Preview the result instead of storing the full text; the audit log is
+    designed for "what did the model do" not "what was the full response".
+
+    Returns ``Any`` instead of ``"ToolCallRecord"`` to avoid the circular
+    import — the harness imports this module's public symbols, not the other
+    way around. Callers receive a `agents._harness.ToolCallRecord` regardless.
+    """
+    from agents._harness import ToolCallRecord
+
+    result = trace.result
+    if len(result) > _TOOL_RESULT_PREVIEW_MAX:
+        result = result[:_TOOL_RESULT_PREVIEW_MAX] + "…(truncated)"
+    arguments = (
+        trace.arguments_raw
+        if isinstance(trace.arguments_raw, str)
+        else json.dumps(trace.arguments_raw)
+    )
+    return ToolCallRecord(
+        name=trace.name,
+        arguments=arguments,
+        result_preview=result,
+        is_error=trace.is_error,
+    )
