@@ -39,3 +39,8 @@ build/
 *.key
 !**/testdata/**/*.key
 secrets/
+
+# Test artifacts
+.coverage
+.coverage.*
+htmlcov/
