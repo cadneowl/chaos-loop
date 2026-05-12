@@ -1,5 +1,10 @@
 # chaos agent — implementation plan
 
+<img src="../../docs/cast/chaos_destroyer.png" alt="The Chaos Goblin · small, fast, gleeful" width="280" align="right" />
+
+> *"replicas: 1? For ME? You shouldn't have."*
+> — [The Chaos Goblin](../../docs/CAST.md#the-chaos-goblin--small-fast-gleeful)
+
 > **Alias:** "Chaos Destroyer" from the proposition.
 > **Role:** execute one or more `FaultSpec` entries by rendering Chaos Mesh CRDs (or invoking custom action handlers for security-flavored faults), apply them, observe lifecycle, clean up, and return a precise `ChaosTimeline`.
 

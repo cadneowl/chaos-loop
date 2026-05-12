@@ -63,6 +63,10 @@ Each agent is invoked through a thin adapter that:
 
 ## Agent specifications
 
+> The cast: [docs/CAST.md](CAST.md) has portraits + stat blocks for every
+> agent (and the orchestrator + meta-harness). Below: their formal contracts.
+
+
 ### tester (`agents/tester/`)
 
 **Input:** `TesterRequest` — kind=baseline|verify, target identifier, run history reference

@@ -5,6 +5,15 @@
 [![ruff](https://img.shields.io/badge/ruff-clean-blue)](#test-status)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
+<p align="center">
+  <img src="docs/cast/the_group.png" alt="The cast: orchestrator, tester, chaos goblin, security bouncer, diagnostician, fixer, meta-harness" width="780" />
+</p>
+
+A multi-agent system where each agent has a job, a chaos-themed persona,
+and zero authority over anyone else's decisions. Meet the full cast in
+[**docs/CAST.md**](docs/CAST.md) — including the orchestrator who runs the
+band and the meta-harness who audits every musician.
+
 A multi-agent system that **closes the loop** on chaos engineering: it
 generates hypotheses by reading the target's source, injects faults via
 [Chaos Mesh](https://chaos-mesh.org/), verifies steady state with statistical
@@ -124,9 +133,12 @@ several things differently.
 
 ### The closed loop, step by step
 
+<img src="docs/cast/orchestrator.png" alt="The Orchestrator" width="240" align="right" />
+
 The orchestrator (`orchestrator/loop.py`) runs a deterministic state
 machine. Each transition is persisted to SQLite so a mid-run crash is
-recoverable.
+recoverable. *"Everyone in their lane. The state machine doesn't take
+requests."*
 
 ```
 INITIALIZING
@@ -283,11 +295,14 @@ modes for `requires_approval` faults.
 
 ### The meta-harness: how every AI call is controlled
 
+<img src="docs/cast/meta_harness.png" alt="The Meta-Harness" width="240" align="right" />
+
 LLMs are the cognitive surface of the system; they are also the surface
 that costs money, leaks data, hallucinates, and can loop. Every call into
 an LLM-backed agent passes through a **meta-harness** wrapper
 (`agents/_harness.py`) that gives the orchestrator one place to enforce
-control properties across all five agents.
+control properties across all five agents. *"Permit, please. Spending
+report. Audit log. Move along."*
 
 The wrapper is a `__getattr__` proxy — calling `harness.instrument(name,
 agent)` returns a transparent stand-in that satisfies the same Protocol as
@@ -638,6 +653,7 @@ chaos/
 
 ## Further reading
 
+- [docs/CAST.md](docs/CAST.md) — the seven characters who do all the work (with portraits and stat blocks)
 - [docs/MODES.md](docs/MODES.md) — the `static` / `hybrid` / `llm` trichotomy explained
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — agent specs + state machine in depth
 - [docs/SAFETY.md](docs/SAFETY.md) — blast radius + abort conditions + approvals

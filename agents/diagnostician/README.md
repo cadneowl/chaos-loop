@@ -1,5 +1,10 @@
 # diagnostician agent — implementation plan
 
+<img src="../../docs/cast/diagnostician.png" alt="The Diagnostician · the detective" width="280" align="right" />
+
+> *"It was the missing retry, in the cart service, with the 503 at 14:02:18."*
+> — [The Diagnostician](../../docs/CAST.md#the-diagnostician--the-detective)
+
 > **Aliases:** "Debugger" (from the proposition), "diagnostician" (in the SCE literature), "RCA agent."
 > **Role:** when post-chaos verification fails, take the failed reports + chaos timeline + observability data + target source code, and produce a ranked list of root-cause hypotheses with evidence.
 

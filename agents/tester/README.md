@@ -1,5 +1,10 @@
 # tester agent — implementation plan
 
+<img src="../../docs/cast/tester.png" alt="The Tester · the statistician" width="280" align="right" />
+
+> *"Trust nothing. Sample everything. Especially 'looks fine to me'."*
+> — [The Tester](../../docs/CAST.md#the-tester--the-statistician)
+
 > **Alias:** the "Tester" agent from the original proposition.
 > **Role:** establish a statistical baseline of healthy behavior, verify that the same probes still pass after chaos, and generate hypotheses by reading the target's source code.
 

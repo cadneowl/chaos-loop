@@ -1,5 +1,10 @@
 # fixer agent — implementation plan
 
+<img src="../../docs/cast/fixer.png" alt="The Fixer · the handyman" width="280" align="right" />
+
+> *"I draft. I don't merge. You merge. That's the deal."*
+> — [The Fixer](../../docs/CAST.md#the-fixer--the-handyman)
+
 > **Role:** take a `DiagnosisReport`, decide whether to act, and produce a **draft** PR with the proposed fix + a regression test (or a docs-only output for `working-as-intended` cases). Never auto-merges.
 
 ## Current implementations

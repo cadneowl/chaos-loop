@@ -1,5 +1,10 @@
 # security agent — implementation plan
 
+<img src="../../docs/cast/security.png" alt="The Security Bouncer" width="280" align="right" />
+
+> *"Your image is unsigned, your deps are stale, and we're not friends."*
+> — [The Security Bouncer](../../docs/CAST.md#the-security-bouncer--your-names-not-on-the-sbom)
+
 > **Alias:** the "Security" agent introduced in the follow-up to integrate DAST + supply chain analysis into the chaos lifecycle.
 > **Role:** establish a security baseline of the target system, re-scan after chaos, detect runtime drift in the SBOM, and generate **security hypotheses** by reading SBOMs + auth code + cluster policies.
 
