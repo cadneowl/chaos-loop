@@ -37,6 +37,8 @@ Can we torment **AI** back? Yes, yes we can.
 
 This repository is the apparatus.
 
+**Code:** <https://github.com/cadneowl/chaos-loop>
+
 ---
 
 ## The gap that eats your weekends
@@ -293,8 +295,11 @@ Prometheus port-forward — follow
 
 ---
 
-The CLI lives in [`orchestrator/main.py`](../orchestrator/main.py).
-The harness, sub-300 lines that buy us everything in the table above,
-is [`agents/_harness.py`](../agents/_harness.py).
+The CLI lives in [`orchestrator/main.py`](https://github.com/cadneowl/chaos-loop/blob/master/orchestrator/main.py).
+The harness — sub-300 lines that buy us everything in the table above
+— is [`agents/_harness.py`](https://github.com/cadneowl/chaos-loop/blob/master/agents/_harness.py).
+
+**Read the code, run the dry-run, file an issue, send a PR:**
+<https://github.com/cadneowl/chaos-loop>
 
 The voodoo dolls and the needle collection are yours to keep.
