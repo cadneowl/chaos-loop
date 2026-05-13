@@ -88,29 +88,38 @@ not a delete — the audit trail keeps every receipt.
 
 ## Getting a `hypothesis_id`
 
-Run the loop once to produce a hypothesis, then:
+Run the loop once to produce a hypothesis. Each hypothesis carries its
+own 12-hex `id` field — that's the fingerprint. The CLI surfaces it
+directly:
 
 ```bash
-chaos show <experiment-id> | jq '.diagnosis.hypotheses'
+chaos show <experiment-id> | jq '.diagnosis.hypotheses[].id'
 ```
 
-The fingerprint is a stable hash of `(suggested_fix_class, sorted
-affected_paths, summary)`. Compute it directly:
+## CLI shortcuts
+
+Two commands make managing rules painless:
 
 ```bash
-python -c "
-from shared.contracts import RootCauseHypothesis
-from orchestrator.suppression import hypothesis_fingerprint
-h = RootCauseHypothesis(
-    summary='cart service has hard dep on Redis with no retry',
-    confidence=0.8,
-    evidence=[],
-    suggested_fix_class='missing-retry',
-    affected_paths=['services/cart/redis_client.py'],
-)
-print(hypothesis_fingerprint(h))
-"
+# Append a rule muting hypothesis #1 from a recorded experiment:
+chaos suppress add exp-aaaaaaaaaaaa 1 --reason "tracked in JIRA-1234"
+
+# Add a sunset:
+chaos suppress add exp-aaaaaaaaaaaa 1 \
+    --reason "false-positive; revisit after detector tuning" \
+    --expires 2026-08-01T00:00:00Z
+
+# List active rules:
+chaos suppress list
+# match                          reason                  expires_at
+# hypothesis_id='22681744a18a'   tracked in JIRA-1234    —
 ```
+
+`chaos suppress add` reads the hypothesis at the given 1-based index,
+takes its `id`, and appends a rule to `<cwd>/.chaos/suppress.yaml`
+(creating the file if it doesn't exist). The file format is the same
+one you'd hand-write — `chaos suppress list` and the orchestrator both
+read it identically.
 
 If the diagnostician's summary changes for a finding, the fingerprint
 changes too — the operator must re-suppress. That's intentional: a different

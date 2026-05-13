@@ -384,5 +384,122 @@ def validate(
     console.print(f"  target: {plan.target_app} in {plan.safety.namespace}@{plan.safety.cluster_context}")
 
 
+suppress_app = typer.Typer(
+    help="Manage .chaos/suppress.yaml hypothesis suppression rules.",
+    no_args_is_help=True,
+)
+app.add_typer(suppress_app, name="suppress")
+
+
+@suppress_app.command("list")
+def suppress_list_cmd() -> None:
+    """List active suppression rules from .chaos/suppress.yaml (cwd-relative)."""
+    from orchestrator.suppression import load_repo_suppress_list
+
+    rules = load_repo_suppress_list().rules
+    if not rules:
+        console.print(
+            "[yellow]no suppression rules — .chaos/suppress.yaml is empty or missing[/yellow]"
+        )
+        return
+
+    table = Table("match", "reason", "expires_at")
+    for r in rules:
+        parts = []
+        for label in ("hypothesis_id", "fix_class", "path_glob", "summary_contains"):
+            val = getattr(r, label)
+            if val is not None:
+                parts.append(f"{label}={val!r}")
+        match_str = " AND ".join(parts) if parts else "—"
+        table.add_row(
+            match_str,
+            r.reason or "[dim]—[/dim]",
+            r.expires_at.isoformat() if r.expires_at else "[dim]—[/dim]",
+        )
+    console.print(table)
+
+
+@suppress_app.command("add")
+def suppress_add_cmd(
+    experiment_id: str = typer.Argument(..., help="Experiment ID containing the hypothesis"),
+    hypothesis_index: int = typer.Argument(
+        ..., min=1, help="1-based index of the hypothesis to suppress"
+    ),
+    reason: str = typer.Option(
+        "", "--reason", "-r", help="Free-text reason kept in the audit trail"
+    ),
+    expires: str | None = typer.Option(
+        None, "--expires", help="ISO-8601 datetime when this rule stops matching"
+    ),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """Suppress one recorded hypothesis from triggering the fixer.
+
+    Looks up the hypothesis by its 1-based index in the experiment's
+    diagnosis, then appends a rule keyed by the hypothesis's stable
+    fingerprint to ``<cwd>/.chaos/suppress.yaml`` (creating the file if
+    needed). On the next run, the orchestrator skips ``propose_fix`` for
+    any hypothesis with the same fingerprint.
+    """
+    from datetime import datetime as _dt
+
+    from orchestrator.suppression import SuppressList
+    from shared.contracts import SuppressionRule
+
+    store = _store(db)
+    record = store.load(experiment_id)
+    if record is None:
+        console.print(f"[red]no experiment {experiment_id} in store[/red]")
+        raise typer.Exit(code=1)
+    if record.diagnosis is None or not record.diagnosis.hypotheses:
+        console.print(f"[red]{experiment_id} has no diagnosis to suppress[/red]")
+        raise typer.Exit(code=1)
+    if hypothesis_index > len(record.diagnosis.hypotheses):
+        console.print(
+            f"[red]hypothesis_index {hypothesis_index} out of range; "
+            f"the experiment has {len(record.diagnosis.hypotheses)} hypotheses[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    h = record.diagnosis.hypotheses[hypothesis_index - 1]
+
+    parsed_expires = None
+    if expires is not None:
+        try:
+            parsed_expires = _dt.fromisoformat(expires.replace("Z", "+00:00"))
+        except ValueError as e:
+            console.print(f"[red]invalid --expires value:[/red] {e}")
+            raise typer.Exit(code=1) from e
+
+    new_rule = SuppressionRule(
+        hypothesis_id=h.id,
+        reason=reason or f"suppressed via `chaos suppress add` against {experiment_id}",
+        expires_at=parsed_expires,
+    )
+
+    # Load existing or start fresh; append; serialize.
+    suppress_path = Path.cwd() / ".chaos" / "suppress.yaml"
+    if suppress_path.exists():
+        existing_raw = yaml.safe_load(suppress_path.read_text(encoding="utf-8")) or {}
+        existing = SuppressList.model_validate(existing_raw)
+        existing.rules.append(new_rule)
+    else:
+        suppress_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = SuppressList(rules=[new_rule])
+
+    # `mode="json"` so datetimes become strings (yaml.safe_dump can't serialize
+    # datetimes natively); `exclude_none=True` keeps the file readable by
+    # omitting unset optional fields.
+    serialized = existing.model_dump(mode="json", exclude_none=True)
+    suppress_path.write_text(
+        yaml.safe_dump(serialized, sort_keys=False), encoding="utf-8"
+    )
+
+    console.print(f"[green]added suppression rule for hypothesis {h.id}[/green]")
+    console.print(f"  summary    : {h.summary}")
+    console.print(f"  fix_class  : {h.suggested_fix_class}")
+    console.print(f"  written to : {suppress_path}")
+
+
 if __name__ == "__main__":
     app()

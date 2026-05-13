@@ -74,3 +74,33 @@ h5 {
   --mat-chip-elevated-container-color: #f1f5f9;
   --mat-chip-label-text-color: #64748b;
 }
+
+// Muted hypothesis: dim the whole card so it visibly recedes, badge it,
+// and tooltip the suppression reason so an operator can recover the
+// `why` without leaving the page.
+.hypothesis.suppressed {
+  opacity: 0.62;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 8px,
+    rgba(148, 163, 184, 0.06) 8px,
+    rgba(148, 163, 184, 0.06) 16px
+  );
+}
+
+.muted-badge {
+  display: inline-block;
+  margin-left: 0.6rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  cursor: help;
+}

@@ -30,7 +30,6 @@ owns the evaluation logic (matching + fingerprinting + file loading).
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -91,21 +90,14 @@ def describe_rule(rule: SuppressionRule) -> str:
 
 
 def hypothesis_fingerprint(h: RootCauseHypothesis) -> str:
-    """Stable 12-hex-digit hash of (fix_class, sorted paths, summary).
+    """Stable 12-hex-digit fingerprint of a hypothesis.
 
-    Canonical identifier when adding a suppression rule by `hypothesis_id`.
-    Stable across runs as long as the diagnostician produces the same
-    summary; if the summary drifts, the operator must re-suppress (which is
-    the right tradeoff — a different summary means a different finding).
+    Computed once on the Pydantic model as ``RootCauseHypothesis.id``;
+    this function is a passthrough so callers can keep the symmetry with
+    ``rule_matches(rule, h, now=...)``. The actual hash lives in
+    ``shared.contracts`` to avoid a contracts → orchestrator import cycle.
     """
-    canonical = "|".join(
-        (
-            h.suggested_fix_class,
-            ",".join(sorted(h.affected_paths)),
-            h.summary,
-        )
-    )
-    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+    return h.id
 
 
 def load_repo_suppress_list(repo_root: Path | None = None) -> SuppressList:

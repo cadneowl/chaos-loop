@@ -303,6 +303,14 @@ export interface RootCauseHypothesis {
   evidence: string[];
   suggested_fix_class: SuggestedFixClass;
   affected_paths: string[];
+  /**
+   * Stable 12-hex fingerprint derived from (fix_class, sorted paths, summary).
+   * Match against `DiagnosisReport.suppressed_fingerprints` to know whether
+   * this hypothesis was muted. Computed on the server side; not optional in
+   * practice but typed optional for backwards compatibility with records
+   * written before this field was added.
+   */
+  id?: string;
 }
 
 export interface DiagnosisRequest {

@@ -99,4 +99,50 @@ describe('DiagnosisTabComponent', () => {
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toContain('No evidence cited');
   });
+
+  it('shows a muted badge when a hypothesis is in suppressed_fingerprints', async () => {
+    const fixture = TestBed.createComponent(DiagnosisTabComponent);
+    fixture.componentRef.setInput(
+      'diagnosis',
+      diagnosis({
+        hypotheses: [
+          {
+            id: 'aaaa11112222',
+            summary: 'muted finding',
+            confidence: 0.9,
+            evidence: [],
+            suggested_fix_class: 'missing-retry',
+            affected_paths: [],
+          },
+          {
+            id: 'bbbb33334444',
+            summary: 'active finding',
+            confidence: 0.8,
+            evidence: [],
+            suggested_fix_class: 'missing-timeout',
+            affected_paths: [],
+          },
+        ],
+        suppressed_fingerprints: ['aaaa11112222'],
+        suppression_notes: { aaaa11112222: 'tracked in JIRA-1234' },
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const cards = root.querySelectorAll('.hypothesis');
+    expect(cards).toHaveLength(2);
+
+    // First card: muted — gets the class + the badge + the reason as title.
+    expect(cards[0].classList.contains('suppressed')).toBe(true);
+    const badge = cards[0].querySelector('.muted-badge');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent?.trim()).toBe('muted');
+    expect(badge?.getAttribute('title')).toBe('tracked in JIRA-1234');
+
+    // Second card: active — neither class nor badge.
+    expect(cards[1].classList.contains('suppressed')).toBe(false);
+    expect(cards[1].querySelector('.muted-badge')).toBeNull();
+  });
 });
