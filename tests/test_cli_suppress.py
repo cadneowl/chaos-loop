@@ -24,7 +24,7 @@ from shared.contracts import (
 
 @pytest.fixture
 def runner() -> CliRunner:
-    return CliRunner(mix_stderr=False)
+    return CliRunner()
 
 
 def _record_with_hypotheses(
