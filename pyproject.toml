@@ -11,7 +11,7 @@ dependencies = [
     # Multi-backend LLM client (Anthropic, Ollama, OpenAI, etc.). Strategies use this.
     "litellm>=1.83",
     # Contracts
-    "pydantic>=2.6",
+    "pydantic>=2.13.4",
     "pydantic-settings>=2.2",
     # Orchestration
     "structlog>=24.1",
