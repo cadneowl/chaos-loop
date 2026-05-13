@@ -83,9 +83,9 @@ def test_summary_renders_enums_as_value_not_repr() -> None:
     Regression: the fixer's `action` is a FixAction enum, and we used `{val!r}`
     which leaked `<FixAction.CODE_PATCH: 'code-patch'>` straight into the UI.
     """
-    from enum import Enum
+    from enum import StrEnum
 
-    class _Action(str, Enum):
+    class _Action(StrEnum):
         CODE_PATCH = "code-patch"
 
     class _AgentWithEnumAction:
