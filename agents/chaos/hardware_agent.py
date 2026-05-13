@@ -25,6 +25,7 @@ from typing import Literal
 from agents.chaos.faults import _meta
 from agents.chaos.faults.rf import has_rf_renderer, render_rf_fault
 from agents.chaos.hardware_io import HardwareIO, InjectionHandle
+from agents.chaos.hardware_safety import HardwareSafetyConfig, run_all_gates
 from shared.contracts import ChaosTimeline, ExperimentPlan, TimelineEvent
 
 log = logging.getLogger(__name__)
@@ -58,9 +59,11 @@ class HardwareChaosAgent:
         *,
         hardware: HardwareIO | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] | None = None,
+        safety_config: HardwareSafetyConfig | None = None,
     ) -> None:
         self._hardware = hardware
         self._sleep: Callable[[float], Awaitable[None]] = sleep_fn or asyncio.sleep
+        self._safety_config = safety_config or HardwareSafetyConfig()
 
     async def execute(self, plan: ExperimentPlan) -> ChaosTimeline:
         """Render each fault to a HardwareFault, inject, wait, clean up.
@@ -88,10 +91,16 @@ class HardwareChaosAgent:
                 return self._fail(
                     plan,
                     f"fault {fault.name!r} has no hardware renderer "
-                    "(only RF faults are wired in Phase 1)",
+                    "(RF faults only — power/sensor/time arrive in Phase 3)",
                 )
         if len(plan.faults) > 1 and not plan.safety.allow_multi_fault:
             return self._fail(plan, "plan has multiple faults but allow_multi_fault is False")
+
+        # Hardware safety gates: five checks specific to live electronics
+        # (bench-mode, geofence, thermal, emission compliance, battery).
+        # See agents/chaos/hardware_safety.py.
+        if fail := await run_all_gates(plan, self._hardware, self._safety_config):
+            return self._fail(plan, f"hardware safety gate: {fail.reason.value} — {fail.detail}")
 
         events: list[TimelineEvent] = []
         # Track every handle we open so cleanup-on-exception is exhaustive.
