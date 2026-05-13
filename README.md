@@ -129,7 +129,7 @@ recoverable. *"Everyone in their lane. The state machine doesn't take
 requests."*
 
 <p align="center">
-  <img src="docs/cast/diagram_decision_flow.png" alt="The orchestrator state machine: INITIALIZING through pre-flight gates, BASELINE / BASELINE_OK / INJECT / VERIFY branches, then STEADY → RECORDED on the happy path or REGRESSED → DIAGNOSE → DIAGNOSED → PROPOSE_FIX → FIX_PROPOSED → RECORDED, with explicit BASELINE_FAIL / INJECT_FAILED → ABORTED branches" width="520" />
+  <img src="docs/cast/diagram_decision_flow.png?v=2" alt="The orchestrator state machine: INITIALIZING through pre-flight gates, BASELINE / BASELINE_OK / INJECT / VERIFY branches, then STEADY → RECORDED on the happy path or REGRESSED → DIAGNOSE → DIAGNOSED → PROPOSE_FIX → FIX_PROPOSED → RECORDED, with explicit BASELINE_FAIL / INJECT_FAILED → ABORTED branches" width="520" />
 </p>
 
 **Hard rules baked into the state machine:**
