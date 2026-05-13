@@ -92,6 +92,17 @@ def run(
         envvar="CHAOS_LLM_API_BASE",
         help="Override LLM API base (e.g. 'http://localhost:11434' for Ollama).",
     ),
+    hardware: bool = typer.Option(
+        False,
+        "--hardware",
+        help=(
+            "Target a hardware bench instead of Kubernetes. Wires "
+            "HardwareChaosAgent + HardwareTelemetryBackend against an "
+            "in-process simulator (Phase 1) or a real bench via "
+            "HilHardwareIO (Phase 2; not wired here yet). See "
+            "docs/NEOOWL_ADAPTATION.md."
+        ),
+    ),
 ) -> None:
     """Execute one experiment from YAML.
 
@@ -101,6 +112,7 @@ def run(
       llm     - LLM everywhere. Requires --model + (for non-Anthropic) --api-base.
 
     --dry-run uses mock agents; ignores profile.
+    --hardware swaps the chaos + tester backends to talk to a hardware bench.
     """
     plan = _load_plan(plan_path)
     store = _store(db)
@@ -117,6 +129,29 @@ def run(
         # invocation logs (useful for testing the harness itself end-to-end).
         wrapped = {
             name: harness.instrument(name, inst) for name, inst in agent_dict.items()
+        }
+        agents = Agents(**wrapped)
+    elif hardware:
+        # Hardware bench wiring — Phase 1 uses SimulatedHardwareIO so the
+        # CLI works without a real ESP32 plugged in. Phase 2 will switch
+        # to `HilHardwareIO` once the attack-ESP32 firmware lands.
+        from agents._mocks import build_mock_agents
+        from agents.chaos.hardware_agent import HardwareChaosAgent
+        from agents.chaos.hardware_io import SimulatedHardwareIO
+        from agents.tester.agent import ClaudeTesterAgent
+        from agents.tester.tools.hardware_telemetry import HardwareTelemetryBackend
+
+        sim = SimulatedHardwareIO()
+        mocks = build_mock_agents()  # security / diagnostician / fixer stay mocked
+        wrapped = {
+            "tester": harness.instrument(
+                "tester",
+                ClaudeTesterAgent(prom_backend=HardwareTelemetryBackend(sim)),
+            ),
+            "security": harness.instrument("security", mocks["security"]),
+            "chaos": harness.instrument("chaos", HardwareChaosAgent(hardware=sim)),
+            "diagnostician": harness.instrument("diagnostician", mocks["diagnostician"]),
+            "fixer": harness.instrument("fixer", mocks["fixer"]),
         }
         agents = Agents(**wrapped)
     else:

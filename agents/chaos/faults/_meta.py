@@ -24,6 +24,20 @@ class FaultDef:
 
 
 CATALOGUE: dict[str, FaultDef] = {
+    # ---- hardware (HardwareChaosAgent path; chaos_mesh_kind is None because
+    # the fault is enacted by an attack device over serial/MQTT, not via the
+    # Kubernetes API). See docs/NEOOWL_ADAPTATION.md.
+    "wifi.deauth": FaultDef(
+        name="wifi.deauth",
+        category=FaultCategory.RF,
+        description=(
+            "Broadcast 802.11 deauthentication frames at the device-under-test's "
+            "BSSID, simulating a low-cost WiFi jammer. Used to verify NeoOwl's "
+            "detection latency and mesh-failover behavior."
+        ),
+        requires_approval=False,
+        chaos_mesh_kind=None,
+    ),
     # ---- classical (Chaos Mesh native) ----
     "pod.kill": FaultDef(
         name="pod.kill",

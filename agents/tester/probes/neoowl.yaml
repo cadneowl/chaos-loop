@@ -1,0 +1,23 @@
+# NeoOwl probe set — read against a `HardwareIO` via HardwareTelemetryBackend.
+#
+# The "query" is a literal metric name the firmware exposes; the
+# HardwareTelemetryBackend does NOT parse PromQL. If you need
+# aggregation (rate / histogram_quantile / etc.), do it on the firmware
+# side and expose the computed metric directly.
+#
+# Phase 1 ships one probe: detector latency. Phase 3 will add battery /
+# cert / gateway-uplink / mesh-consensus / false-positive-rate.
+
+probes:
+  - name: detector_latency_p95_ms
+    description: |
+      Detection latency, sampled at the firmware side as a pre-aggregated
+      p95 over the most recent attack-class observations. Steady state on
+      a benched NeoOwl device sits around 200ms; under jamming/deauth it
+      degrades into the 1500ms range before the mesh-failover kicks in.
+    query: detector_latency_p95_ms
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 500
+    metric_name: detector_latency_p95_ms
