@@ -14,7 +14,14 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 # ---------- identifiers --------------------------------------------------------
 
@@ -415,6 +422,31 @@ class RootCauseHypothesis(BaseModel):
         "working-as-intended",
     ]
     affected_paths: list[str] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def id(self) -> str:
+        """Stable 12-hex fingerprint derived from (fix_class, sorted paths, summary).
+
+        Used as the suppression key — see `orchestrator.suppression`. Exposed
+        as a computed field so it lands on every serialized record (SQLite
+        blob + API JSON), letting the UI match against
+        ``diagnosis.suppressed_fingerprints`` without client-side hashing.
+
+        The hash is inlined here (rather than imported from
+        ``orchestrator.suppression``) to avoid a contracts → orchestrator
+        cycle. The orchestrator-side helper just reads ``h.id``.
+        """
+        import hashlib
+
+        canonical = "|".join(
+            (
+                self.suggested_fix_class,
+                ",".join(sorted(self.affected_paths)),
+                self.summary,
+            )
+        )
+        return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
 
 
 class DiagnosisReport(BaseModel):

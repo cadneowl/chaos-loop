@@ -118,6 +118,20 @@ def test_fingerprint_independent_of_path_order() -> None:
     assert hypothesis_fingerprint(a) == hypothesis_fingerprint(b)
 
 
+def test_hypothesis_id_field_round_trips_through_json() -> None:
+    """The computed `id` field must serialize with the model so the UI / store
+    see the same fingerprint the suppressor uses on the server side."""
+    h = hyp()
+    blob = h.model_dump_json()
+    assert h.id in blob
+    # The orchestrator stores the JSON blob in SQLite and re-validates on
+    # load. Computed fields are recomputed on each access; surviving the
+    # round-trip is what matters.
+    h2 = RootCauseHypothesis.model_validate_json(blob)
+    assert h2.id == h.id
+    assert hypothesis_fingerprint(h2) == hypothesis_fingerprint(h)
+
+
 # ----------------------------------------------------------------- apply_to
 
 

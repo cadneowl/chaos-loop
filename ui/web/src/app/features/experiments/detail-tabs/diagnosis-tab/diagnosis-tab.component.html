@@ -18,11 +18,22 @@
 
     <section class="hypotheses">
       @for (h of hypotheses(); track $index; let i = $index) {
-        <mat-card appearance="outlined" class="hypothesis">
+        <mat-card
+          appearance="outlined"
+          class="hypothesis"
+          [class.suppressed]="isSuppressed(h)"
+        >
           <mat-card-header>
             <mat-card-title>
               <span class="rank">#{{ i + 1 }}</span>
               {{ h.summary }}
+              @if (isSuppressed(h)) {
+                <span
+                  class="muted-badge"
+                  [attr.title]="suppressionReason(h)"
+                  [attr.aria-label]="'Muted — ' + (suppressionReason(h) ?? 'no reason given')"
+                >muted</span>
+              }
             </mat-card-title>
             <mat-card-subtitle>
               <mat-chip-set aria-label="Hypothesis classification">
