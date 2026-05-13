@@ -60,6 +60,7 @@ can't*.
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Operating the system](#operating-the-system)
+- [Diagnostic UI](#diagnostic-ui)
 - [Test status](#test-status)
 - [Repo layout](#repo-layout)
 - [Further reading](#further-reading)
@@ -593,6 +594,34 @@ non-trivial invocations (e.g., WSL-from-Windows). See `--help` on each.
 
 ---
 
+## Diagnostic UI
+
+A read-only web UI ships in [`ui/`](ui/). It opens the orchestrator's
+SQLite store in WAL snapshot mode (never blocks the writer) and renders
+each experiment as six tabs — Overview, Timeline (invocations + chaos
+events interleaved), LLM telemetry (spend / tokens / per-agent
+breakdown), Diagnosis (ranked hypotheses with confidence chips), Fix
+proposal (action + draft-PR link), and Raw JSON. NestJS 11 + Angular 21
+standalone, single-machine and local-only by default; a bearer-token
+mode opens it up for shared use.
+
+<p align="center">
+  <a href="ui/README.md">
+    <img src="ui/docs/screenshots/03-timeline.png" alt="Timeline of a real chaos run, with chaos-mesh CRD events highlighted" width="780" />
+  </a>
+</p>
+
+```bash
+cd ui && pnpm install
+pnpm --filter @chaos/ui-server start:dev   # http://127.0.0.1:3000
+pnpm --filter @chaos/ui-web    start       # http://localhost:4200
+```
+
+Full setup, screenshots of every tab, and how to wire it to a live
+chaos-mesh cluster: [**ui/README.md**](ui/README.md).
+
+---
+
 ## Test status
 
 ```bash
@@ -646,6 +675,7 @@ chaos/
 ├── experiments/        Plan YAMLs + run artifacts
 ├── tests/              411 unit tests (mock-based; live cluster tested via scripts/)
 ├── scripts/            Live-cluster smoke tests + renderer validator
+├── ui/                 Read-only diagnostic web UI: NestJS server + Angular SPA
 └── docs/               Deeper architecture / safety / modes / comparison / roadmap docs
 ```
 
@@ -661,6 +691,7 @@ chaos/
 - [docs/COMPARISON.md](docs/COMPARISON.md) — prior-art landscape (ChaosEater, Harness, Litmus, etc.)
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones + remaining work
 - Per-agent READMEs: [tester](agents/tester/README.md) · [chaos](agents/chaos/README.md) · [security](agents/security/README.md) · [diagnostician](agents/diagnostician/README.md) · [fixer](agents/fixer/README.md)
+- [ui/README.md](ui/README.md) — read-only diagnostic UI on top of the SQLite store, with screenshots of every tab and the live-cluster wiring guide
 
 ---
 
