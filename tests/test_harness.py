@@ -77,6 +77,33 @@ def test_invocation_recorded_with_summary() -> None:
     assert "findings_count=0" in inv.output_summary
 
 
+def test_summary_renders_enums_as_value_not_repr() -> None:
+    """An Enum return field must summarize as `attr=value`, not `attr=<Enum.X: 'value'>`.
+
+    Regression: the fixer's `action` is a FixAction enum, and we used `{val!r}`
+    which leaked `<FixAction.CODE_PATCH: 'code-patch'>` straight into the UI.
+    """
+    from enum import Enum
+
+    class _Action(str, Enum):
+        CODE_PATCH = "code-patch"
+
+    class _AgentWithEnumAction:
+        async def propose(self, _req: object) -> object:
+            class _Report:
+                action = _Action.CODE_PATCH
+
+            return _Report()
+
+    harness = Harness()
+    wrapped = harness.instrument("fixer", _AgentWithEnumAction())
+    asyncio.run(wrapped.propose(_FakeRequest("exp-aaaaaaaaaaaa")))
+
+    inv = harness.invocations[0]
+    assert "action=code-patch" in inv.output_summary
+    assert "<" not in inv.output_summary  # no repr leakage
+
+
 def test_error_recorded_but_propagated() -> None:
     harness = Harness()
     wrapped = harness.instrument("fake", _FakeAgent())

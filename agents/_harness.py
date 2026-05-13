@@ -28,6 +28,7 @@ import asyncio
 import logging
 import time
 from contextvars import ContextVar
+from enum import Enum
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -236,9 +237,22 @@ def _summarize_output(result: Any) -> str:
     for attr in ("steady_state", "success", "action", "state"):
         val = getattr(result, attr, None)
         if val is not None:
-            parts.append(f"{attr}={val!r}")
+            parts.append(f"{attr}={_render(val)}")
     for attr in ("findings", "hypotheses", "events"):
         seq = getattr(result, attr, None)
         if seq is not None:
             parts.append(f"{attr}_count={len(seq)}")
     return " ".join(parts)
+
+
+def _render(val: Any) -> str:
+    """Render a salient field value for an output summary.
+
+    Enums are rendered as their `.value` so the summary reads `action=code-patch`
+    rather than `action=<FixAction.CODE_PATCH: 'code-patch'>`. Anything else
+    falls through to `str()`, which gives `True`/`False` for bools and bare
+    text for strings.
+    """
+    if isinstance(val, Enum):
+        return str(val.value)
+    return str(val)
