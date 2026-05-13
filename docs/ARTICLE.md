@@ -69,7 +69,7 @@ Pydantic-typed contracts, which means when they lie to each other the
 type checker catches it before it reaches main.
 
 <p align="center">
-  <img src="cast/diagram_cast.png" alt="orchestrator delegating to tester, chaos, security, diagnostician, fixer" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/docs/cast/diagram_cast.png" alt="orchestrator delegating to tester, chaos, security, diagnostician, fixer" width="780" />
 </p>
 
 - **Tester** — reads the target's source for fragility patterns
@@ -104,7 +104,7 @@ persisted to SQLite, so a mid-run crash is recoverable — the ape can
 be revived from the autopsy.
 
 <p align="center">
-  <img src="cast/diagram_state_machine.png" alt="state machine: INITIALIZING through pre-flight gates to BASELINE / BASELINE_OK / INJECT / VERIFY branches, then STEADY → RECORDED on the happy path or REGRESSED → DIAGNOSE → PROPOSE_FIX → FIX_PROPOSED → RECORDED, with explicit BASELINE_FAIL / INJECT_FAILED → ABORTED branches" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/docs/cast/diagram_state_machine.png" alt="state machine: INITIALIZING through pre-flight gates to BASELINE / BASELINE_OK / INJECT / VERIFY branches, then STEADY → RECORDED on the happy path or REGRESSED → DIAGNOSE → PROPOSE_FIX → FIX_PROPOSED → RECORDED, with explicit BASELINE_FAIL / INJECT_FAILED → ABORTED branches" width="780" />
 </p>
 
 Hard rules baked at the state-machine level, not left up to the
@@ -133,7 +133,7 @@ because *it almost had the answer*. Every call into an LLM-backed
 agent passes through a **meta-harness** wrapper.
 
 <p align="right">
-  <img src="cast/meta_harness.png" alt="The meta-harness — auditor with clipboard" width="240" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/docs/cast/meta_harness.png" alt="The meta-harness — auditor with clipboard" width="240" />
 </p>
 
 The harness is a `__getattr__` proxy. `harness.instrument("tester",
@@ -178,7 +178,7 @@ gut says the ape has been on the loose for too long. So we built one.
 ### Every experiment in one list
 
 <p align="center">
-  <img src="../ui/docs/screenshots/01-experiments-list.png" alt="Experiments list showing recorded / aborted runs with filter pills" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/ui/docs/screenshots/01-experiments-list.png" alt="Experiments list showing recorded / aborted runs with filter pills" width="780" />
 </p>
 
 State chips colour-coded, filter pills to scope by phase. `RECORDED`
@@ -188,7 +188,7 @@ the ape in the act and put it down humanely* state. Click any row.
 ### The timeline — what the ape actually did
 
 <p align="center">
-  <img src="../ui/docs/screenshots/03-timeline.png" alt="Timeline tab of a real chaos run, showing chaos.scheduled / chaos.started / chaos.cleaned-up interleaved with tester.baseline, chaos.execute, tester.verify" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/ui/docs/screenshots/03-timeline.png" alt="Timeline tab of a real chaos run, showing chaos.scheduled / chaos.started / chaos.cleaned-up interleaved with tester.baseline, chaos.execute, tester.verify" width="780" />
 </p>
 
 Every agent invocation interleaved with every chaos-mesh CRD lifecycle
@@ -208,7 +208,7 @@ forensic event that benefits from being looked at from several angles.
 The UI isn't only a museum for past runs. It's the control plane.
 
 <p align="center">
-  <img src="../ui/docs/screenshots/13-run-page.png" alt="Run page with plan picker and profile radio" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/ui/docs/screenshots/13-run-page.png" alt="Run page with plan picker and profile radio" width="780" />
 </p>
 
 `+ Run` opens a plan picker. Pick a YAML, pick a profile
@@ -220,7 +220,7 @@ the loop doesn't care about your browser.
 Once a run is going, the detail page grows an action bar:
 
 <p align="center">
-  <img src="../ui/docs/screenshots/14-control-actions.png" alt="Detail page action bar with Pause and Abort buttons during an active experiment" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/ui/docs/screenshots/14-control-actions.png" alt="Detail page action bar with Pause and Abort buttons during an active experiment" width="780" />
 </p>
 
 **Pause** writes `pause_requested=1` on the experiment row. The
@@ -229,7 +229,7 @@ transitions and parks the experiment in `PAUSED` at the next boundary.
 When it does, the bar swaps Pause for Resume:
 
 <p align="center">
-  <img src="../ui/docs/screenshots/15-paused-state.png" alt="Detail page in PAUSED state — action bar now shows Resume + Abort" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/ui/docs/screenshots/15-paused-state.png" alt="Detail page in PAUSED state — action bar now shows Resume + Abort" width="780" />
 </p>
 
 **Resume** clears the flag and the orchestrator continues to the next
@@ -241,7 +241,7 @@ gets a clean leash-cut, not a panic.
 ### The dashboards — voodoo doll anatomy
 
 <p align="center">
-  <img src="../ui/docs/screenshots/09-dashboard.png" alt="Dashboard: three section cards for LLM spend, findings, and fix proposals" width="780" />
+  <img src="https://raw.githubusercontent.com/cadneowl/chaos-loop/master/ui/docs/screenshots/09-dashboard.png" alt="Dashboard: three section cards for LLM spend, findings, and fix proposals" width="780" />
 </p>
 
 Cross-experiment views aggregate every run in the store. LLM spend per
