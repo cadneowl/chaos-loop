@@ -38,6 +38,41 @@ CATALOGUE: dict[str, FaultDef] = {
         requires_approval=False,
         chaos_mesh_kind=None,
     ),
+    "wifi.jam": FaultDef(
+        name="wifi.jam",
+        category=FaultCategory.RF,
+        description=(
+            "Sweep a noise carrier across the 2.4 GHz ISM band. Indiscriminate "
+            "(blocks all WiFi traffic, not just the DUT's link) — verifies the "
+            "device degrades cleanly to LoRa/cellular fallback rather than "
+            "hanging on a dead WiFi association."
+        ),
+        requires_approval=True,
+        chaos_mesh_kind=None,
+    ),
+    "ble.advertising_flood": FaultDef(
+        name="ble.advertising_flood",
+        category=FaultCategory.RF,
+        description=(
+            "Emit BLE advertising packets at ~10k/sec from N spoofed MAC "
+            "addresses. Used to verify the BLE scanner's queue + dedup logic "
+            "and that CPU headroom holds under adversarial discovery noise."
+        ),
+        requires_approval=False,
+        chaos_mesh_kind=None,
+    ),
+    "lora.jam": FaultDef(
+        name="lora.jam",
+        category=FaultCategory.RF,
+        description=(
+            "Continuous unmodulated carrier on the DUT's LoRa channel. "
+            "Used to verify gateway-side packet-loss reporting and that "
+            "the NVR's store-and-forward buffer absorbs the resulting "
+            "uplink stall without dropping security events."
+        ),
+        requires_approval=True,
+        chaos_mesh_kind=None,
+    ),
     # ---- classical (Chaos Mesh native) ----
     "pod.kill": FaultDef(
         name="pod.kill",
