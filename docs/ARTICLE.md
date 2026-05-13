@@ -152,19 +152,36 @@ clicks Pause / Resume / Abort from the same UI when something looks off.
 
 ## Try it
 
+The recipe below runs on a clean machine — no cluster, no LLM, no API
+key. The orchestrator's `--dry-run` flag swaps every agent for a mock
+that produces a record with the full shape of a real one (eight agent
+invocations, a fake `NetworkChaos` lifecycle, a mock diagnosis, a mock
+fix proposal), which is exactly the data the UI was built around.
+
+Prerequisites: Python 3.11+, Node.js 22+, [pnpm](https://pnpm.io/installation) 11.
+
 ```bash
-git clone <this-repo> chaos && cd chaos
-python -m venv .venv && source .venv/bin/activate
+# 1. install
+git clone https://github.com/cadneowl/chaos-loop chaos && cd chaos
+python -m venv .venv && source .venv/bin/activate    # POSIX
+# .\.venv\Scripts\Activate.ps1                       # Windows PowerShell
 pip install -e ".[dev]"
 
-# Deterministic, no LLM, no API key needed:
-chaos run experiments/examples/01-redis-network-loss.yaml --profile static
+# 2. populate the store with a dry-run experiment (no cluster needed)
+chaos run experiments/examples/01-redis-network-loss.yaml --dry-run
 
-# Or just the UI against the dry-run store:
+# 3. start the UI (two terminals; both inside ui/)
 cd ui && pnpm install
-pnpm --filter @chaos/ui-server start:dev
-pnpm --filter @chaos/ui-web    start
+pnpm --filter @chaos/ui-server start:dev   # http://127.0.0.1:3000
+pnpm --filter @chaos/ui-web    start       # http://localhost:4200
 ```
+
+Open <http://localhost:4200/> and the experiment from step 2 is on the
+list — every tab is populated, every chart has data.
+
+For a real chaos run against a live cluster (kind + chaos-mesh +
+Prometheus port-forward), follow
+[`ui/README.md#connecting-to-the-chaos-infra`](../ui/README.md#connecting-to-the-chaos-infra).
 
 The orchestrator's CLI lives in [`orchestrator/main.py`](../orchestrator/main.py).
 The harness is [`agents/_harness.py`](../agents/_harness.py) — sub-300
