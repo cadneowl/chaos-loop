@@ -4,9 +4,6 @@
 # HardwareTelemetryBackend does NOT parse PromQL. If you need
 # aggregation (rate / histogram_quantile / etc.), do it on the firmware
 # side and expose the computed metric directly.
-#
-# Phase 1 ships one probe: detector latency. Phase 3 will add battery /
-# cert / gateway-uplink / mesh-consensus / false-positive-rate.
 
 probes:
   - name: detector_latency_p95_ms
@@ -21,3 +18,65 @@ probes:
       kind: value_below
       threshold: 500
     metric_name: detector_latency_p95_ms
+
+  - name: battery_soc
+    description: |
+      Battery state of charge as a fraction (0.0 - 1.0). Below ~0.30 the
+      hardware-safety battery gate refuses to start chaos runs; the
+      probe surfaces the reading so a degraded run still records it.
+    query: battery_soc
+    mode: instant
+    expect:
+      kind: value_above
+      threshold: 0.30
+    metric_name: battery_soc
+
+  - name: cert_validity_remaining_h
+    description: |
+      Hours until the next cert in the deployment expires. Healthy
+      benched devices sit at one week; the time.clock.drift fault
+      forces this to 0 by pushing the clock past every NotAfter.
+    query: cert_validity_remaining_h
+    mode: instant
+    expect:
+      kind: value_above
+      threshold: 24
+    metric_name: cert_validity_remaining_h
+
+  - name: gateway_uplink_rtt_ms
+    description: |
+      Round-trip from the gateway to the cloud control plane. WiFi /
+      LoRa-blocking faults force the gateway onto a slower fallback
+      transport; this probe catches the regression.
+    query: gateway_uplink_rtt_ms
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 1500
+    metric_name: gateway_uplink_rtt_ms
+
+  - name: mesh_consensus_degraded_count
+    description: |
+      Count of sensors currently in the "degraded consensus" cohort.
+      The firmware must signal degradation rather than silently
+      dropping a missing sensor from the mesh; sensor.dropout exercises
+      this.
+    query: mesh_consensus_degraded_count
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 1
+    metric_name: mesh_consensus_degraded_count
+
+  - name: detector_false_positive_rate
+    description: |
+      Detections per known-quiet window over the last hour, expressed
+      as a fraction. A stuck sensor flatlines while neighbors continue
+      to vary, which should drive this up via the cross-sensor anomaly
+      check.
+    query: detector_false_positive_rate
+    mode: instant
+    expect:
+      kind: value_below
+      threshold: 0.01
+    metric_name: detector_false_positive_rate

@@ -73,6 +73,98 @@ CATALOGUE: dict[str, FaultDef] = {
         requires_approval=True,
         chaos_mesh_kind=None,
     ),
+    # ---- power.* (HardwareChaosAgent path; programmable bench PSU drives the
+    # DUT's supply rail). Phase 3 of the NeoOwl adaptation. See
+    # docs/NEOOWL_ADAPTATION.md.
+    "power.brownout": FaultDef(
+        name="power.brownout",
+        category=FaultCategory.POWER,
+        description=(
+            "Drop the DUT's supply rail to a configurable millivolt floor "
+            "for `duration_seconds`. Used to verify the brownout detector "
+            "fires, NVS writes are journaled, and the device recovers "
+            "without bricking. Repeated brownouts surface latent boot loops."
+        ),
+        requires_approval=True,
+        chaos_mesh_kind=None,
+    ),
+    "power.ramp": FaultDef(
+        name="power.ramp",
+        category=FaultCategory.POWER,
+        description=(
+            "Slow ramp the supply rail from a configurable start to floor "
+            "voltage over `duration_seconds`. Tests the brownout detector's "
+            "hysteresis behavior — should fire well before the rail reaches "
+            "the firmware's minimum operating voltage."
+        ),
+        requires_approval=True,
+        chaos_mesh_kind=None,
+    ),
+    "power.cut": FaultDef(
+        name="power.cut",
+        category=FaultCategory.POWER,
+        description=(
+            "Hard supply cut for `duration_seconds`, then restore. "
+            "Validates the capacitor-backed event buffer: any security "
+            "event captured in the second before the cut must survive "
+            "the power-cycle and arrive at the gateway on next boot."
+        ),
+        requires_approval=True,
+        chaos_mesh_kind=None,
+    ),
+    # ---- sensor.* (HardwareChaosAgent path; an inline I²C/SPI mux disconnects
+    # the sensor's bus or replays a frozen reading). Phase 3.
+    "sensor.dropout": FaultDef(
+        name="sensor.dropout",
+        category=FaultCategory.SENSOR,
+        description=(
+            "Disconnect a sensor's I²C/SPI bus for `duration_seconds` so "
+            "the firmware sees a missing peripheral. Used to verify mesh "
+            "consensus degrades gracefully (the device must signal "
+            "degradation rather than silently dropping the sensor)."
+        ),
+        requires_approval=False,
+        chaos_mesh_kind=None,
+    ),
+    "sensor.stuck": FaultDef(
+        name="sensor.stuck",
+        category=FaultCategory.SENSOR,
+        description=(
+            "Intercept a sensor's bus and replay the last observed reading "
+            "for `duration_seconds`. The reading looks plausible to a "
+            "single-sensor check; the anomaly detector should catch the "
+            "flatline against neighbor sensors."
+        ),
+        requires_approval=False,
+        chaos_mesh_kind=None,
+    ),
+    # ---- time.* hardware-side (gateway firewall blocks NTP or supplies a
+    # skewed server). Reuses FaultCategory.TIME but with chaos_mesh_kind=None
+    # so HardwareChaosAgent picks them up rather than the Chaos Mesh path.
+    "time.ntp.cut": FaultDef(
+        name="time.ntp.cut",
+        category=FaultCategory.TIME,
+        description=(
+            "Firewall NTP traffic at the gateway for `duration_seconds`. "
+            "Verifies the gateway's clock-source fallback (PPS / cellular "
+            "modem time) and that cert-renewal scheduling tolerates the "
+            "drift without deferring critical renewals."
+        ),
+        requires_approval=False,
+        chaos_mesh_kind=None,
+    ),
+    "time.clock.drift": FaultDef(
+        name="time.clock.drift",
+        category=FaultCategory.TIME,
+        description=(
+            "Inject a fake NTP server with a configurable skew in seconds. "
+            "Validates that cert validation refuses to accept now-future "
+            "or now-past certificates regardless of what the system clock "
+            "claims."
+        ),
+        requires_approval=True,
+        chaos_mesh_kind=None,
+    ),
     # ---- classical (Chaos Mesh native) ----
     "pod.kill": FaultDef(
         name="pod.kill",

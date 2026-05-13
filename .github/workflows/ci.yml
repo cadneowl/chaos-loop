@@ -63,6 +63,12 @@ jobs:
       - name: chaos list-faults
         run: chaos list-faults
 
+      # Render + inject + clean up every hardware fault against the
+      # simulator. Catches catalogue / renderer / simulator drift; same
+      # gate `neoowl-defense` will run against the real bench in CI.
+      - name: chaos catalogue verify
+        run: chaos catalogue verify
+
   ui:
     name: ui — server + web · build + test
     runs-on: ubuntu-latest
