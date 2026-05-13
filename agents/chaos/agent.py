@@ -207,7 +207,7 @@ def render(
     index: int = typer.Option(0, "--index", help="fault index in the plan"),
 ) -> None:
     """Render one FaultSpec to its Chaos Mesh CRD YAML on stdout. No apply."""
-    raw = yaml.safe_load(plan_path.read_text())
+    raw = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
     plan = ExperimentPlan.model_validate(raw)
     if index >= len(plan.faults):
         typer.echo(f"index {index} out of range; plan has {len(plan.faults)} fault(s)", err=True)

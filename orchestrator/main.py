@@ -46,7 +46,7 @@ _LIVE_STATES: set[ExperimentState] = {
 
 
 def _load_plan(path: Path) -> ExperimentPlan:
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     return ExperimentPlan.model_validate(raw)
 
 
@@ -357,7 +357,7 @@ def validate(
     """Validate a plan YAML against the schema, the fault catalogue, and safety gates."""
     from agents.chaos.faults._meta import CATALOGUE
 
-    raw = yaml.safe_load(plan_path.read_text())
+    raw = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
     try:
         plan = ExperimentPlan.model_validate(raw)
     except Exception as e:

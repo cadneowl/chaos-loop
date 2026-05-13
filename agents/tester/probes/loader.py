@@ -26,7 +26,7 @@ def load_probe_set(path: Path) -> list[Probe]:
               threshold: 0.5
             metric_name: my_metric
     """
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     return [Probe.model_validate(p) for p in raw.get("probes", [])]
 
 

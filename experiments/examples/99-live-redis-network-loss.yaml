@@ -1,0 +1,35 @@
+experiment_id: exp-1efaceb00b1e
+title: "LIVE: cartservice tolerates valkey-cart network loss"
+target_app: otel-demo
+target_repo: https://github.com/open-telemetry/opentelemetry-demo
+
+faults:
+  - category: network
+    name: network.loss
+    target_selector:
+      app.kubernetes.io/component: valkey-cart
+    parameters:
+      loss_percent: 100
+      direction: to
+    duration_seconds: 30
+    requires_approval: false
+    rationale: |
+      First end-to-end live run on the kind-chaos-dev cluster after deploying
+      otel-demo. Static profile (no LLM); chaos-mesh actually injects the loss.
+    hypothesis_id: h-otel-cart-redis-001
+
+safety:
+  cluster_context: kind-chaos-dev
+  namespace: otel-demo
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  allow_multi_fault: false
+  require_namespace_annotation: true
+
+budget:
+  soft_cap_usd: 1.0
+  hard_cap_usd: 5.0
+  wall_clock_seconds: 600
+
+quiet_window_pre_seconds: 5
+quiet_window_post_seconds: 5
