@@ -23,10 +23,13 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from agents.chaos.faults import _meta
+from agents.chaos.faults.power import has_power_renderer, render_power_fault
 from agents.chaos.faults.rf import has_rf_renderer, render_rf_fault
-from agents.chaos.hardware_io import HardwareIO, InjectionHandle
+from agents.chaos.faults.sensor import has_sensor_renderer, render_sensor_fault
+from agents.chaos.faults.time_hardware import has_time_renderer, render_time_fault
+from agents.chaos.hardware_io import HardwareFault, HardwareIO, InjectionHandle
 from agents.chaos.hardware_safety import HardwareSafetyConfig, run_all_gates
-from shared.contracts import ChaosTimeline, ExperimentPlan, TimelineEvent
+from shared.contracts import ChaosTimeline, ExperimentPlan, FaultSpec, TimelineEvent
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +46,33 @@ def _event(fault_name: str, kind: _EventKind, detail: str = "") -> TimelineEvent
         event=kind,
         detail=detail,
     )
+
+
+def _has_hardware_renderer(name: str) -> bool:
+    return (
+        has_rf_renderer(name)
+        or has_power_renderer(name)
+        or has_sensor_renderer(name)
+        or has_time_renderer(name)
+    )
+
+
+def _render_hardware_fault(fault: FaultSpec) -> HardwareFault:
+    """Dispatch to the renderer registry that owns this fault name.
+
+    Each registry covers one FaultCategory's worth of hardware faults;
+    the agent doesn't care which one a given fault came from, only that
+    exactly one knows how to render it.
+    """
+    if has_rf_renderer(fault.name):
+        return render_rf_fault(fault)
+    if has_power_renderer(fault.name):
+        return render_power_fault(fault)
+    if has_sensor_renderer(fault.name):
+        return render_sensor_fault(fault)
+    if has_time_renderer(fault.name):
+        return render_time_fault(fault)
+    raise KeyError(f"no hardware renderer for {fault.name!r}")
 
 
 class HardwareChaosAgent:
@@ -87,11 +117,11 @@ class HardwareChaosAgent:
         for fault in plan.faults:
             if fault.name not in _meta.CATALOGUE:
                 return self._fail(plan, f"unknown fault {fault.name!r}; not in catalogue")
-            if not has_rf_renderer(fault.name):
+            if not _has_hardware_renderer(fault.name):
                 return self._fail(
                     plan,
                     f"fault {fault.name!r} has no hardware renderer "
-                    "(RF faults only — power/sensor/time arrive in Phase 3)",
+                    "(not in rf/power/sensor/time hardware registries)",
                 )
         if len(plan.faults) > 1 and not plan.safety.allow_multi_fault:
             return self._fail(plan, "plan has multiple faults but allow_multi_fault is False")
@@ -112,7 +142,7 @@ class HardwareChaosAgent:
 
             for fault in plan.faults:
                 events.append(_event(fault.name, "scheduled"))
-                rendered = render_rf_fault(fault)
+                rendered = _render_hardware_fault(fault)
                 handle = await self._hardware.inject_fault(rendered)
                 active_handles.append(handle)
                 events.append(

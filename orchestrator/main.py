@@ -536,5 +536,108 @@ def suppress_add_cmd(
     console.print(f"  written to : {suppress_path}")
 
 
+catalogue_app = typer.Typer(
+    help="Inspect / validate the fault catalogue end-to-end against the simulator.",
+    no_args_is_help=True,
+)
+app.add_typer(catalogue_app, name="catalogue")
+
+
+@catalogue_app.command("verify")
+def catalogue_verify_cmd(
+    only: str | None = typer.Option(
+        None,
+        "--only",
+        help="Comma-separated fault names to verify (default: every hardware fault).",
+    ),
+) -> None:
+    """Render + inject + clean up every hardware fault against SimulatedHardwareIO.
+
+    Used in CI to catch catalogue / renderer / simulator drift before a
+    bench operator does. Exits non-zero if any fault fails its loop.
+    """
+    from agents.chaos.faults._meta import CATALOGUE
+    from agents.chaos.hardware_agent import HardwareChaosAgent
+    from agents.chaos.hardware_io import SimulatedHardwareIO
+    from shared.contracts import FaultSpec, SafetyConstraints
+
+    # Hardware faults = catalogue entries with chaos_mesh_kind None AND a
+    # hardware category. (Some non-CRD entries like `secret.rotate` use
+    # other agents; not our concern here.)
+    hardware_categories = {"rf", "power", "sensor", "time"}
+    if only:
+        wanted = {n.strip() for n in only.split(",") if n.strip()}
+        candidates = [n for n in wanted if n in CATALOGUE]
+        missing = wanted - set(candidates)
+        if missing:
+            console.print(f"[red]unknown fault names:[/red] {sorted(missing)}")
+            raise typer.Exit(code=1)
+    else:
+        candidates = sorted(
+            name
+            for name, defn in CATALOGUE.items()
+            if defn.chaos_mesh_kind is None and defn.category.value in hardware_categories
+        )
+
+    table = Table("fault", "category", "result", "detail")
+    failures: list[str] = []
+
+    async def _no_sleep(_s: float) -> None:
+        return None
+
+    async def _verify_one(name: str) -> tuple[bool, str]:
+        defn = CATALOGUE[name]
+        sim = SimulatedHardwareIO()
+        agent = HardwareChaosAgent(hardware=sim, sleep_fn=_no_sleep)
+        plan = ExperimentPlan(
+            title=f"catalogue-verify::{name}",
+            target_app="neoowl-sim",
+            faults=[
+                FaultSpec(
+                    category=defn.category,
+                    name=name,
+                    target_selector={"device": "dut-1"},
+                    parameters={},
+                    duration_seconds=2,
+                    requires_approval=False,
+                    rationale=f"catalogue verify for {name}",
+                )
+            ],
+            safety=SafetyConstraints(
+                cluster_context="bench-hardware",
+                namespace="bench",
+                require_namespace_annotation=False,
+            ),
+        )
+        timeline = await agent.execute(plan)
+        if not timeline.success:
+            return False, timeline.error or "unknown failure"
+        # Sanity: every fault should leave the active-faults dict empty.
+        if sim._active_faults:
+            return False, f"leak: {len(sim._active_faults)} active fault(s) after cleanup"
+        return True, "ok"
+
+    async def _run_all() -> None:
+        for name in candidates:
+            passed, detail = await _verify_one(name)
+            table.add_row(
+                name,
+                CATALOGUE[name].category.value,
+                "[green]pass[/green]" if passed else "[red]fail[/red]",
+                detail,
+            )
+            if not passed:
+                failures.append(f"{name}: {detail}")
+
+    asyncio.run(_run_all())
+    console.print(table)
+    if failures:
+        console.print(f"[red]{len(failures)} fault(s) failed verification[/red]")
+        raise typer.Exit(code=1)
+    console.print(
+        f"[green]ok[/green] — {len(candidates)} hardware faults verified end-to-end"
+    )
+
+
 if __name__ == "__main__":
     app()

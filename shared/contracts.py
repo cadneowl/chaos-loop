@@ -117,6 +117,8 @@ class FaultCategory(StrEnum):
     # Hardware-flavored — see docs/NEOOWL_ADAPTATION.md.
     # Not Kubernetes; HardwareIO + HardwareChaosAgent dispatch these.
     RF = "rf"
+    POWER = "power"
+    SENSOR = "sensor"
 
 
 class FaultSpec(BaseModel):

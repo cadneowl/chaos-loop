@@ -153,6 +153,12 @@ class SimulatedHardwareIO:
     _active_faults: dict[str, HardwareFault] = field(default_factory=dict)
     _next_handle: int = 0
     _reset_count: int = 0
+    # Phase 3 counters: bump these in inject_fault so probes reading
+    # boot_count_delta / nvs_write_failures / event_buffer_persisted_count
+    # see the right deltas after a brownout/cut/ramp.
+    _power_brownout_events: int = 0
+    _nvs_write_failures: int = 0
+    _event_buffer_persisted: int = 0
     # Geofence tag the simulator advertises; tests can override to force
     # the geofence gate to fail. Default matches HardwareSafetyConfig's
     # default skip behavior (config tag=None means "don't check").
@@ -188,6 +194,30 @@ class SimulatedHardwareIO:
             # String-valued metric: encode the tag via labels rather than value.
             labels = {**labels, "tag": self.geofence_tag}
             value = 1.0
+        # ---- Phase 3 metrics: power.* / sensor.* / time.* faults degrade
+        # the corresponding readings. Probes in neoowl.yaml read these.
+        elif metric == "boot_count_delta":
+            # Goes up by 1 every time a power.* fault is/was active.
+            value = float(self._power_brownout_events)
+        elif metric == "nvs_write_failures":
+            value = float(self._nvs_write_failures)
+        elif metric == "event_buffer_persisted_count":
+            value = float(self._event_buffer_persisted)
+        elif metric == "mesh_consensus_degraded_count":
+            value = float(self._mesh_consensus_degraded_count())
+        elif metric == "anomaly_detector_fired":
+            value = float(self._anomaly_detector_fired())
+        elif metric == "cert_renewal_deferred_count":
+            value = float(self._cert_renewal_deferred_count())
+        elif metric == "cert_validation_failures":
+            value = float(self._cert_validation_failures())
+        elif metric == "gateway_uplink_rtt_ms":
+            value = self._gateway_uplink_rtt_ms()
+        elif metric == "cert_validity_remaining_h":
+            value = self._cert_validity_remaining_h()
+        elif metric == "detector_false_positive_rate":
+            # Healthy default; a stuck sensor pushes it up.
+            value = 0.02 if self._has_active_fault("sensor.stuck") else 0.001
         else:
             # Unknown metric: return 0 rather than raise, mirroring how
             # Prometheus returns an empty vector for unknown queries.
@@ -200,6 +230,18 @@ class SimulatedHardwareIO:
         self._next_handle += 1
         handle = InjectionHandle(id=f"sim-inject-{self._next_handle:04d}")
         self._active_faults[handle.id] = fault
+        # Power-rail faults leave their fingerprint in the persistent
+        # counters: the brownout fires the detector once, may corrupt
+        # an in-flight NVS write, and on power.cut the capacitor-backed
+        # event buffer captures one event before the rail collapses.
+        if fault.name == "power.brownout":
+            self._power_brownout_events += 1
+            self._nvs_write_failures += 1
+        elif fault.name == "power.cut":
+            self._power_brownout_events += 1
+            self._event_buffer_persisted += 1
+        elif fault.name == "power.ramp":
+            self._power_brownout_events += 1
         # In a real bench inject_fault would block until the attack
         # device confirms it's transmitting; for the simulator we yield
         # once so the event-loop ordering matches real-world timing.
@@ -220,14 +262,53 @@ class SimulatedHardwareIO:
 
     def _current_latency_ms(self) -> float:
         # Any of the WiFi-degradation faults degrade detector latency. LoRa
-        # and BLE faults exercise other subsystems modeled by other metrics
-        # (Phase 3 will surface ble_scan_queue_depth, lora_packet_loss_pct).
+        # and BLE faults exercise other subsystems modeled by other metrics.
         if self._has_active_fault("wifi.deauth") or self._has_active_fault("wifi.jam"):
             return self._degraded_latency_ms
         return self._baseline_latency_ms
 
     def _has_active_fault(self, name: str) -> bool:
         return any(f.name == name for f in self._active_faults.values())
+
+    def _mesh_consensus_degraded_count(self) -> int:
+        # A dropped sensor is the canonical "consensus degraded" signal —
+        # the device must surface degradation rather than silently dropping
+        # the sensor from the mesh.
+        return 1 if self._has_active_fault("sensor.dropout") else 0
+
+    def _anomaly_detector_fired(self) -> int:
+        # A stuck sensor flatlines while neighbors continue to vary — the
+        # cross-sensor anomaly detector should catch that.
+        return 1 if self._has_active_fault("sensor.stuck") else 0
+
+    def _cert_renewal_deferred_count(self) -> int:
+        # NTP cut causes the gateway to defer scheduled renewals until
+        # the wall-clock source recovers.
+        return 1 if self._has_active_fault("time.ntp.cut") else 0
+
+    def _cert_validation_failures(self) -> int:
+        # A skewed clock pushes "now" past every cert NotAfter (or before
+        # every NotBefore); validations fail closed.
+        return 1 if self._has_active_fault("time.clock.drift") else 0
+
+    def _gateway_uplink_rtt_ms(self) -> float:
+        # Baseline gateway RTT is comfortable; any RF-blocking fault
+        # forces the gateway onto its slower fallback path.
+        if (
+            self._has_active_fault("wifi.deauth")
+            or self._has_active_fault("wifi.jam")
+            or self._has_active_fault("lora.jam")
+        ):
+            return 1200.0
+        return 80.0
+
+    def _cert_validity_remaining_h(self) -> float:
+        # Healthy default: a healthy week of validity. Drift past NotAfter
+        # shrinks it to zero — by construction since the clock is now in
+        # the future.
+        if self._has_active_fault("time.clock.drift"):
+            return 0.0
+        return 7 * 24.0
 
 
 # ---------------------------------------------------------------------- HIL bench
