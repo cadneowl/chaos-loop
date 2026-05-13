@@ -25,22 +25,9 @@ the fault. A human reads dashboards, files a Jira ticket, opens a PR weeks
 later. This system tries to do all of that — *or fail honestly when it
 can't*.
 
-```
-                  ┌──────────────────────────────────────────────┐
-                  │              orchestrator                    │
-                  │   deterministic state machine + safety gates │
-                  └────────────────┬─────────────────────────────┘
-                                   │
-        ┌──────────┬───────────────┼───────────────┬──────────────┐
-        ▼          ▼               ▼               ▼              ▼
-    ┌────────┐ ┌────────┐    ┌──────────┐   ┌──────────────┐ ┌────────┐
-    │ tester │ │ chaos  │    │ security │   │ diagnostician│ │ fixer  │
-    └────────┘ └────────┘    └──────────┘   └──────────────┘ └────────┘
-   baseline +   inject +     DAST / SBOM     RCA from logs   draft PR
-   hypotheses   security     SCA / secrets   + traces +      + docs,
-   from code    faults via   posture, sign   chaos timeline  never
-   reading      Chaos Mesh   verification    + both reports  auto-merges
-```
+<p align="center">
+  <img src="docs/cast/diagram_cast.png" alt="The orchestrator delegating to five agents: tester, chaos, security, diagnostician, fixer — each labelled with its responsibilities" width="780" />
+</p>
 
 ---
 
@@ -141,42 +128,9 @@ machine. Each transition is persisted to SQLite so a mid-run crash is
 recoverable. *"Everyone in their lane. The state machine doesn't take
 requests."*
 
-```
-INITIALIZING
-    │
-    ▼  pre-flight gates: cluster denylist, blast radius, namespace annotation
-BASELINE  ───────────────────────►  BASELINE_FAIL  ─────►  ABORTED
-    │     check_baseline_healthy?
-    ▼
-BASELINE_OK
-    │  check_budget?
-    ▼
-INJECT  ──── chaos agent renders + applies CRD via ClusterIO
-    │
-    ▼
-INJECTED  ─────────────────────►  INJECT_FAILED  ──────►  ABORTED
-    │
-    ▼
-VERIFY  ──── tester re-runs probes (statistical comparison)
-    │       security re-scans
-    │
-    ▼ steady?
-    ├── yes ──► STEADY  ──► RECORDED  ──► [done]
-    │
-    └── no  ──► REGRESSED
-                    │  check_budget?
-                    ▼
-                DIAGNOSE  ──── diagnostician produces ranked hypotheses
-                    │
-                    ▼
-                DIAGNOSED
-                    │  check_budget?
-                    ▼
-                PROPOSE_FIX  ──── fixer decides + (optionally) drafts PR
-                    │
-                    ▼
-                FIX_PROPOSED  ──► RECORDED  ──► [done]
-```
+<p align="center">
+  <img src="docs/cast/diagram_decision_flow.png" alt="The orchestrator state machine: INITIALIZING through pre-flight gates, BASELINE / BASELINE_OK / INJECT / VERIFY branches, then STEADY → RECORDED on the happy path or REGRESSED → DIAGNOSE → DIAGNOSED → PROPOSE_FIX → FIX_PROPOSED → RECORDED, with explicit BASELINE_FAIL / INJECT_FAILED → ABORTED branches" width="520" />
+</p>
 
 **Hard rules baked into the state machine:**
 
