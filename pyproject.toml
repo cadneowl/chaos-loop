@@ -12,7 +12,7 @@ dependencies = [
     "litellm>=1.83",
     # Contracts
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.2",
+    "pydantic-settings>=2.14.1",
     # Orchestration
     "structlog>=24.1",
     "rich>=13.7",
