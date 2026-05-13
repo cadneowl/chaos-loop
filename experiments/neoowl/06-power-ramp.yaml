@@ -1,0 +1,39 @@
+# Phase 3 fault: slow ramp from 5V to 2.5V over the duration. Tests
+# the brownout detector's hysteresis -- should fire well before the
+# rail reaches the firmware's minimum operating voltage.
+
+experiment_id: exp-300000000006
+title: "NeoOwl: power ramp -- brownout hysteresis"
+target_app: neoowl
+
+faults:
+  - category: power
+    name: power.ramp
+    target_selector:
+      device: dut-1
+    parameters:
+      start_mv: 5000
+      floor_mv: 2500
+      steps: 30
+    duration_seconds: 10
+    requires_approval: false
+    rationale: |
+      Linear voltage ramp; the brownout detector must fire before the
+      rail reaches the firmware's V_MIN, not at it.
+    hypothesis_id: h-neoowl-power-ramp-006
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 2

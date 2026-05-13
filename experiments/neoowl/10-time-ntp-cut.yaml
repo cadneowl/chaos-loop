@@ -1,0 +1,38 @@
+# Phase 3 fault: firewall NTP at the gateway. Verifies the
+# gateway's clock-source fallback and that cert-renewal scheduling
+# tolerates the drift without deferring critical renewals.
+
+experiment_id: exp-30000000000a
+title: "NeoOwl: NTP cut -- clock fallback must hold"
+target_app: neoowl
+
+faults:
+  - category: time
+    name: time.ntp.cut
+    target_selector:
+      device: gateway-1
+    parameters:
+      ports: [123]
+      scope: gateway
+    duration_seconds: 10
+    requires_approval: false
+    rationale: |
+      Drop outbound NTP. The gateway must fall over to PPS / modem
+      time without deferring cert-renewals past their safety window.
+    hypothesis_id: h-neoowl-ntp-cut-010
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1

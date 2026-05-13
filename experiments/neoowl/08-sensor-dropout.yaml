@@ -1,0 +1,38 @@
+# Phase 3 fault: disconnect a sensor's bus. Verifies mesh consensus
+# degrades gracefully -- the device must signal degradation rather
+# than silently dropping the sensor.
+
+experiment_id: exp-300000000008
+title: "NeoOwl: sensor dropout -- mesh consensus must degrade gracefully"
+target_app: neoowl
+
+faults:
+  - category: sensor
+    name: sensor.dropout
+    target_selector:
+      device: dut-1
+    parameters:
+      sensor_id: primary
+      bus: i2c
+    duration_seconds: 10
+    requires_approval: false
+    rationale: |
+      Open the I2C bus to the primary sensor. The firmware must surface
+      mesh_consensus_degraded rather than silently dropping it.
+    hypothesis_id: h-neoowl-sensor-dropout-008
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1

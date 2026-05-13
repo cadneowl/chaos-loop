@@ -1,0 +1,40 @@
+# Phase 2 fault: BLE advertising flood from spoofed MACs. Validates
+# the BLE scanner's dedup/queue logic and that CPU headroom holds
+# under adversarial discovery noise.
+
+experiment_id: exp-200000000003
+title: "NeoOwl: BLE advertising flood -- scanner must dedup"
+target_app: neoowl
+
+faults:
+  - category: rf
+    name: ble.advertising_flood
+    target_selector:
+      device: dut-1
+    parameters:
+      rate_per_second: 10000
+      spoofed_macs: 256
+      adv_data_size: 28
+    duration_seconds: 30
+    requires_approval: false
+    rationale: |
+      Saturate the BLE scanner with 10k adv/sec from 256 cycling MACs.
+      The scanner's queue + dedup logic must hold; CPU idle must not
+      collapse.
+    hypothesis_id: h-neoowl-ble-flood-003
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 300
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1

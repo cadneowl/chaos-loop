@@ -1,0 +1,39 @@
+# Phase 3 fault: drop the supply rail to the brownout floor. Validates
+# the brownout detector fires, NVS writes are journaled, and the device
+# recovers without bricking.
+
+experiment_id: exp-300000000005
+title: "NeoOwl: brownout -- detector fires + NVS journals + recovers"
+target_app: neoowl
+
+faults:
+  - category: power
+    name: power.brownout
+    target_selector:
+      device: dut-1
+    parameters:
+      floor_mv: 2400
+      rise_time_ms: 0
+    duration_seconds: 5
+    requires_approval: false
+    rationale: |
+      Sag the rail below the brownout threshold for 5 seconds and
+      verify the device journals its in-flight NVS write, fires the
+      detector, and recovers cleanly when the rail comes back.
+    hypothesis_id: h-neoowl-brownout-005
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 2

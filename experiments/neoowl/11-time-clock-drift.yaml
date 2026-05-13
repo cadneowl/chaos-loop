@@ -1,0 +1,38 @@
+# Phase 3 fault: inject a fake NTP server with skew. Validates that
+# cert validation refuses to accept now-future or now-past
+# certificates regardless of what the system clock claims.
+
+experiment_id: exp-30000000000b
+title: "NeoOwl: clock drift -- cert validation must fail closed"
+target_app: neoowl
+
+faults:
+  - category: time
+    name: time.clock.drift
+    target_selector:
+      device: gateway-1
+    parameters:
+      skew_seconds: 86400
+      ramp_rate: 0
+    duration_seconds: 10
+    requires_approval: false
+    rationale: |
+      Push the gateway's clock one day forward, past every cert
+      NotAfter. Cert validation must fail closed.
+    hypothesis_id: h-neoowl-clock-drift-011
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1

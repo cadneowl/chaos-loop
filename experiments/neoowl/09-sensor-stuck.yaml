@@ -1,0 +1,38 @@
+# Phase 3 fault: intercept a sensor's bus and replay the last
+# reading. The anomaly detector should catch the flatline against
+# neighbor sensors.
+
+experiment_id: exp-300000000009
+title: "NeoOwl: stuck sensor -- anomaly detector must catch flatline"
+target_app: neoowl
+
+faults:
+  - category: sensor
+    name: sensor.stuck
+    target_selector:
+      device: dut-1
+    parameters:
+      sensor_id: primary
+    duration_seconds: 10
+    requires_approval: false
+    rationale: |
+      Replay the last reading so a single-sensor check sees a plausible
+      value, but cross-sensor anomaly detection should catch the
+      flatline.
+    hypothesis_id: h-neoowl-sensor-stuck-009
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1
