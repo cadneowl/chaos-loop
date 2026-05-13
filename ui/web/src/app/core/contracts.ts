@@ -212,6 +212,10 @@ export interface DiagnosisReport {
   notes: string;
   started_at: IsoDatetime;
   finished_at?: IsoDatetime | null;
+  /** 12-hex fingerprints of hypotheses muted by .chaos/suppress.yaml or plan.suppress. */
+  suppressed_fingerprints?: string[];
+  /** fingerprint → rule.reason for the muted hypotheses above. */
+  suppression_notes?: Record<string, string>;
 }
 
 export interface FixProposal {
