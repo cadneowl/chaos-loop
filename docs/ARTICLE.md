@@ -168,34 +168,92 @@ clipboard now.
 
 ---
 
-## What an operator actually sees
+## The UI — for mere mortals
 
-The UI surfaces the audit trail. The most useful screen is the
-timeline: every agent invocation interleaved with every chaos-mesh CRD
-lifecycle event, sorted by timestamp, chaos events highlighted with a
-peach band so the injection window is unmistakable.
+Claude Code is content with a JSON blob and a state diagram. Us mere
+mortals need a UI to feel like anything actually happened. Charts.
+Coloured pills. A red button labelled `Abort` we can press when our
+gut says the ape has been on the loose for too long. So we built one.
+
+### Every experiment in one list
+
+<p align="center">
+  <img src="../ui/docs/screenshots/01-experiments-list.png" alt="Experiments list showing recorded / aborted runs with filter pills" width="780" />
+</p>
+
+State chips colour-coded, filter pills to scope by phase. `RECORDED`
+is the cold-corpse-with-receipts state. `ABORTED` is the *we caught
+the ape in the act and put it down humanely* state. Click any row.
+
+### The timeline — what the ape actually did
 
 <p align="center">
   <img src="../ui/docs/screenshots/03-timeline.png" alt="Timeline tab of a real chaos run, showing chaos.scheduled / chaos.started / chaos.cleaned-up interleaved with tester.baseline, chaos.execute, tester.verify" width="780" />
 </p>
 
-That screenshot is from a real run. The `chaos.started` row carries
-the actual `NetworkChaos/network-loss-00ddba11` CRD identifier that
-chaos-mesh installed on the cluster. The 30-second gap between
-`chaos.execute` start and end is the orchestrator holding while the
-ape does its work.
+Every agent invocation interleaved with every chaos-mesh CRD lifecycle
+event, sorted by timestamp, chaos events highlighted with a peach band
+so the injection window is unmistakable. This screenshot is from a
+real run — the `chaos.started` row carries the actual
+`NetworkChaos/network-loss-00ddba11` CRD identifier that chaos-mesh
+installed on the cluster. The 30-second gap between `chaos.execute`
+start and end is the orchestrator holding while the ape does its work.
 
-Cross-experiment views aggregate every run in the store:
+The detail page has five more tabs — Overview, LLM telemetry,
+Diagnosis, Fix proposal, Raw JSON — because a chaos run is the kind of
+forensic event that benefits from being looked at from several angles.
+
+### Start / Pause / Resume / Abort
+
+The UI isn't only a museum for past runs. It's the control plane.
+
+<p align="center">
+  <img src="../ui/docs/screenshots/13-run-page.png" alt="Run page with plan picker and profile radio" width="780" />
+</p>
+
+`+ Run` opens a plan picker. Pick a YAML, pick a profile
+(`static` / `hybrid` / `llm`), click Run. The server spawns
+`chaos run` as a detached subprocess and the SPA redirects you to the
+new experiment's detail page. The orchestrator outlives a UI restart;
+the loop doesn't care about your browser.
+
+Once a run is going, the detail page grows an action bar:
+
+<p align="center">
+  <img src="../ui/docs/screenshots/14-control-actions.png" alt="Detail page action bar with Pause and Abort buttons during an active experiment" width="780" />
+</p>
+
+**Pause** writes `pause_requested=1` on the experiment row. The
+orchestrator polls that column once per second between state
+transitions and parks the experiment in `PAUSED` at the next boundary.
+When it does, the bar swaps Pause for Resume:
+
+<p align="center">
+  <img src="../ui/docs/screenshots/15-paused-state.png" alt="Detail page in PAUSED state — action bar now shows Resume + Abort" width="780" />
+</p>
+
+**Resume** clears the flag and the orchestrator continues to the next
+state. **Abort** writes `abort_requested=1` with reason `user_kill`,
+the orchestrator tears down any in-flight chaos CRD, transitions to
+`ABORTED`, and the run is done. Three columns. Idempotent. The ape
+gets a clean leash-cut, not a panic.
+
+### The dashboards — voodoo doll anatomy
 
 <p align="center">
   <img src="../ui/docs/screenshots/09-dashboard.png" alt="Dashboard: three section cards for LLM spend, findings, and fix proposals" width="780" />
 </p>
 
-LLM spend per run, which fragility patterns recur across the entire
-history (the voodoo doll's anatomical map, if you will), what the
-fixer has been shipping. The operator clicks Pause / Resume / Abort
-from the same UI when something looks off. Putting the ape down
-humanely is a single click.
+Cross-experiment views aggregate every run in the store. LLM spend per
+experiment. Which fragility patterns recur across the entire history
+(the voodoo doll's anatomical map, if you will). What the fixer has
+been shipping. Three more pages drill in (`/llm`, `/findings`,
+`/fixes`) with ECharts plots that load lazily so the dashboard stays
+fast on a mid-tier laptop in an incident room.
+
+It's read-only by default. Single-machine, local-only. The day you
+need to share it with the team, set `CHAOS_UI_API_KEY` and bind to
+`0.0.0.0`. The UI is still half the size of a Slack tab.
 
 ---
 
