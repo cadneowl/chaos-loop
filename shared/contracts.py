@@ -127,6 +127,41 @@ class FaultSpec(BaseModel):
 # ---------- experiment plan ----------------------------------------------------
 
 
+class SuppressionRule(BaseModel):
+    """One muted-finding rule.
+
+    Mutes a diagnosis hypothesis from triggering the fixer. The hypothesis
+    is still recorded in the audit trail — the orchestrator just skips
+    `propose_fix` for it. At least one match field is required.
+
+    Match fields:
+        hypothesis_id     stable 12-hex fingerprint (orchestrator.suppression.hypothesis_fingerprint)
+        fix_class         matches RootCauseHypothesis.suggested_fix_class
+        path_glob         fnmatch glob against any entry in affected_paths
+        summary_contains  case-insensitive substring match against summary
+
+    See `orchestrator/suppression.py` for evaluation semantics.
+    """
+
+    hypothesis_id: str | None = None
+    fix_class: str | None = None
+    path_glob: str | None = None
+    summary_contains: str | None = None
+    reason: str = ""
+    expires_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_match(self) -> SuppressionRule:
+        if not any(
+            (self.hypothesis_id, self.fix_class, self.path_glob, self.summary_contains)
+        ):
+            raise ValueError(
+                "suppression rule must set at least one of: "
+                "hypothesis_id, fix_class, path_glob, summary_contains"
+            )
+        return self
+
+
 class ExperimentPlan(BaseModel):
     """The orchestrator's request to the chaos agent."""
 
@@ -140,6 +175,10 @@ class ExperimentPlan(BaseModel):
     quiet_window_pre_seconds: int = Field(default=60, ge=0)
     quiet_window_post_seconds: int = Field(default=60, ge=0)
     created_at: datetime = Field(default_factory=_now)
+    suppress: list[SuppressionRule] = Field(
+        default_factory=list,
+        description="Inline suppression rules. Combined with .chaos/suppress.yaml at the repo root.",
+    )
 
     @field_validator("faults")
     @classmethod
@@ -385,6 +424,13 @@ class DiagnosisReport(BaseModel):
     notes: str = ""
     started_at: datetime = Field(default_factory=_now)
     finished_at: datetime | None = None
+
+    # Suppression metadata: the diagnosis still records every hypothesis the
+    # diagnostician produced; the orchestrator just skips the fixer for any
+    # whose fingerprint lands in `suppressed_fingerprints`. UI / aggregates
+    # read the same fields to render "muted" alongside "active".
+    suppressed_fingerprints: list[str] = Field(default_factory=list)
+    suppression_notes: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("hypotheses")
     @classmethod

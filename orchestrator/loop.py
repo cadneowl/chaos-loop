@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from orchestrator import safety
+from orchestrator import safety, suppression
 from orchestrator.budget import BudgetTracker
 from orchestrator.store import ExperimentStore
 from shared.contracts import (
@@ -234,6 +234,11 @@ class ExperimentRunner:
             )
         )
         record.state = ExperimentState.DIAGNOSED
+        # Apply suppression after the diagnostician returns. Mutates the
+        # report in place — every hypothesis stays in the audit trail, but
+        # the suppressed ones won't trigger the fixer.
+        active_suppressions = suppression.build_active_list(plan)
+        suppression.apply_to_diagnosis(record.diagnosis, active_suppressions)
         self.store.save(record)
 
         if fail := self._check_budget_step(budget, record):
@@ -242,6 +247,20 @@ class ExperimentRunner:
             return self._abort(record, fail.reason, fail.detail)
 
         # --- propose fix ----------------------------------------------------
+        # If every hypothesis was suppressed there's nothing actionable left
+        # to propose a fix for. Transition to FIX_DECLINED with a note so the
+        # audit trail captures the decline.
+        if not suppression.active_hypotheses(record.diagnosis):
+            log.info(
+                "%s all hypotheses suppressed; skipping propose_fix",
+                plan.experiment_id,
+            )
+            record.diagnosis.notes = (
+                f"{record.diagnosis.notes}\n" if record.diagnosis.notes else ""
+            ) + "all hypotheses suppressed by .chaos/suppress.yaml or plan.suppress"
+            record.state = ExperimentState.FIX_DECLINED
+            return self._finish(record)
+
         record.state = ExperimentState.PROPOSE_FIX
         self.store.save(record)  # persist before the long-running agent call
         record.fix_proposal = await self.agents.fixer.propose_fix(record.diagnosis)

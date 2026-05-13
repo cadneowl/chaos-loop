@@ -641,6 +641,7 @@ chaos/
 - [docs/MODES.md](docs/MODES.md) — the `static` / `hybrid` / `llm` trichotomy explained
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — agent specs + state machine in depth
 - [docs/SAFETY.md](docs/SAFETY.md) — blast radius + abort conditions + approvals
+- [docs/SUPPRESSION.md](docs/SUPPRESSION.md) — muting findings the loop is allowed to keep producing but you've decided not to act on
 - [docs/SECURITY_CHAOS.md](docs/SECURITY_CHAOS.md) — Security Chaos Engineering integration
 - [docs/COMPARISON.md](docs/COMPARISON.md) — prior-art landscape (ChaosEater, Harness, Litmus, etc.)
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones + remaining work

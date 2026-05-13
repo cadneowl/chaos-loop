@@ -1,0 +1,43 @@
+# .chaos/suppress.yaml — repo-level hypothesis suppression
+#
+# Mute findings the loop is allowed to keep producing but the operator has
+# already decided not to act on. The diagnosis is still recorded in the
+# audit trail; the orchestrator just skips the fixer for matched hypotheses.
+#
+# Drop this file at <repo-root>/.chaos/suppress.yaml (rename from .example)
+# to activate it. Per-plan rules in `plan.suppress:` layer on top.
+#
+# Each rule needs at least one of:
+#   hypothesis_id     stable 12-hex fingerprint (run `chaos show <exp-id>` to find it)
+#   fix_class         matches RootCauseHypothesis.suggested_fix_class
+#   path_glob         fnmatch glob against any entry in affected_paths
+#   summary_contains  case-insensitive substring match against the summary
+#
+# Optional fields on every rule:
+#   reason            free-text label kept in the audit trail
+#   expires_at        ISO datetime; rule is ignored after this date
+#
+# All set match fields must hold (AND across fields). The first rule that
+# matches a hypothesis is the one recorded in `diagnosis.suppression_notes`.
+
+rules:
+  # Permanent: legacy code, scheduled for rewrite, not worth a draft PR.
+  - path_glob: services/legacy/*
+    reason: legacy module — slated for rewrite in 2027-Q1, do not auto-fix
+
+  # Tracked elsewhere: a missing-retry in /vendor that we can't patch.
+  - fix_class: missing-retry
+    path_glob: vendor/**
+    reason: vendor code — escalation tracked in JIRA-1234
+
+  # Short-lived: silence an over-eager detector for one sprint while we tune it.
+  - summary_contains: hardcoded secret
+    path_glob: tests/fixtures/**
+    reason: false-positive on test fixtures; revisit after detector tuning
+    expires_at: 2026-08-01T00:00:00Z
+
+  # Surgical: one specific hypothesis we've decided is wontfix.
+  # Get the fingerprint from `chaos show <experiment-id>` after the loop
+  # has produced the finding once.
+  # - hypothesis_id: a1b2c3d4e5f6
+  #   reason: covered by a regression test in /tests/test_redis.py
