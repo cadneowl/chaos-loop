@@ -1,21 +1,25 @@
 # chaos · reports UI
 
-A read-only diagnostic UI for the closed-loop chaos engineering orchestrator.
-Reads the orchestrator's SQLite store, renders the audit trail of each
-experiment in browseable tabs, and never writes anything back.
+A diagnostic + control UI for the closed-loop chaos engineering orchestrator.
+Reads the orchestrator's SQLite store to render each experiment as a six-tab
+audit trail and four cross-experiment dashboards; writes only to the three
+control-signal columns the orchestrator polls (`pause` / `resume` / `abort`)
+and spawns new `chaos run` subprocesses from an allowlisted plan directory.
 
-![Experiments list](docs/screenshots/01-experiments-list.png)
+![Dashboard](docs/screenshots/09-dashboard.png)
 
 ```
 ui/
-├── server/   Node + NestJS 11 · REST over the SQLite store
-└── web/      Angular 21 standalone + Signals · Material 3 SPA
+├── server/   Node + NestJS 11 · REST over the SQLite store + spawn API
+└── web/      Angular 21 standalone + Signals · Material 3 SPA + ECharts
 ```
 
-The orchestrator (Python, in the parent directory) is the only writer. The
-server opens the store in `readonly: true` mode; the SPA never talks to the
-database directly. This separation keeps the UI from ever standing between
-an in-flight chaos run and its operator.
+The orchestrator (Python, in the parent directory) is the primary writer.
+The server opens a `readonly: true` reader connection for every browse
+endpoint, plus a writer connection that touches **only** the control-signal
+columns the orchestrator already polls between state transitions. The SPA
+never talks to the database directly. The intent is to keep the UI from
+ever standing between an in-flight chaos run and its operator.
 
 ## Quick start
 
@@ -157,6 +161,92 @@ red, the `abort_reason` slug is rendered next to it, and the Diagnosis
 + Fix proposal tabs show empty-state copy explaining why those phases
 never ran.
 
+### Cross-experiment dashboards
+
+#### Dashboard
+
+![Dashboard — three-up overview](docs/screenshots/09-dashboard.png)
+
+Landing page. Three section cards in one glance: LLM spend totals + a
+spend-per-experiment bar, Findings counts + a fix-class breakdown, Fixes
+counts + a daily-throughput line. Each card links to its detail page.
+
+#### LLM telemetry
+
+![LLM telemetry rollups](docs/screenshots/10-llm.png)
+
+Spend, tokens, and per-agent rollups across every experiment in the
+store. Spend-per-experiment bar, by-agent donut, tokens-vs-cost scatter
+(useful for spotting expensive runs that didn't produce more value), and
+a recent-experiments table that drills back into the detail page.
+
+#### Findings
+
+![Findings rollups](docs/screenshots/11-findings.png)
+
+Diagnosis hypotheses across every regression the loop has explained. The
+horizontal bar shows which `suggested_fix_class` slugs (`missing-retry`,
+`missing-circuit-breaker`, …) recur, the histogram shows how confident
+the diagnostician usually is. A recent-hypotheses table renders each
+confidence as a green / amber / grey pill and links back to the
+experiment.
+
+#### Fixes
+
+![Fix proposal outcomes](docs/screenshots/12-fixes.png)
+
+What the fixer agent has done — by action, by day, by file. A donut for
+the action mix (`code-patch` vs `config-change` vs `none` vs `doc-only`),
+a daily-throughput line + area chart, and the top-20 most-touched files
+as a horizontal bar. KPIs at the top show how many proposals drafted a
+PR and how many added a regression test.
+
+### Control plane
+
+The UI is the orchestrator's control plane: start a new experiment, pause
+one mid-flight, resume it, or abort it cleanly.
+
+#### `/run` — start a new experiment
+
+![Run page with plan picker and profile radio](docs/screenshots/13-run-page.png)
+
+Lists every YAML in the allowlisted plan directory (default
+`experiments/examples/`, override with `CHAOS_PLANS_DIR`). Pick a plan,
+pick a profile (`static` / `hybrid` / `llm`), click Run. The server
+spawns `python -m orchestrator.main run <plan> --profile <mode>` as a
+detached subprocess, returns the parsed `experiment_id` immediately, and
+the SPA redirects to `/experiments/:id` so you watch the audit trail
+populate in real time. The orchestrator outlives a UI server restart.
+
+Hardening: filenames are restricted to bare names in the allowlisted
+directory — path traversal, absolute paths, and nested filenames all
+reject with 400. `experiment_id` is regex-validated against the same
+constraint the orchestrator's Pydantic schema enforces, so a typo
+surfaces as an HTTP 500 with a clear message rather than as a 404
+redirect later.
+
+#### Pause / Resume / Abort
+
+![Action bar on a live experiment](docs/screenshots/14-control-actions.png)
+
+The detail page grows an action bar whenever the experiment is in a
+non-terminal state (the complement of the orchestrator's `_LIVE_STATES`
+— including `baseline_fail` and `inject_failed`, since the operator can
+still abort an experiment stuck in a failure state). Clicking any
+button writes a single column on the experiment row; the orchestrator
+polls those columns once per second between state transitions and acts
+accordingly:
+
+| Button | What it sets | What the orchestrator does next |
+|---|---|---|
+| **Pause** | `pause_requested = 1` | parks the experiment in `PAUSED` at the next state boundary |
+| **Resume** | `pause_requested = 0` | continues to the next state |
+| **Abort** | `abort_requested = 1`, `abort_reason_requested = 'user_kill'` | tears down any in-flight chaos CRDs, transitions to `ABORTED` |
+
+Abort prompts via `confirm()` first; the writer is idempotent so a
+second click is harmless. Action buttons stay disabled across the
+record reload to prevent double-clicks against a stale snapshot.
+
 ## Connecting to the chaos infra
 
 The UI server reads from one file: the SQLite database the Python
@@ -244,6 +334,8 @@ fix proposal). Perfect for UI development.
 | Var | Default | Purpose |
 |---|---|---|
 | `CHAOS_STORE_PATH` | `~/.local/share/chaos/experiments.sqlite` | SQLite file the orchestrator writes to. The server warns and serves an empty list if it doesn't exist. |
+| `CHAOS_PLANS_DIR` | `<repo>/experiments/examples/` | Allowlisted directory for `/run`. Only YAML files in this directory show up in the plan picker and are accepted by the spawn endpoint. |
+| `CHAOS_PYTHON` | `<repo>/.venv/Scripts/python.exe` (Win) or `<repo>/.venv/bin/python` (POSIX) if it exists, else `python` | Interpreter the spawn endpoint uses for `python -m orchestrator.main run …`. Override to point at a system Python or a different venv. |
 | `CHAOS_UI_PORT` | `3000` | Server port. |
 | `CHAOS_UI_BIND` | `127.0.0.1` | Bind address. **Local-only by default.** Only set to `0.0.0.0` after you've also set `CHAOS_UI_API_KEY`. |
 | `CHAOS_UI_API_KEY` | unset | Optional bearer-token auth. Required when binding to anything other than localhost. |
@@ -251,7 +343,7 @@ fix proposal). Perfect for UI development.
 ## Test
 
 ```bash
-pnpm --filter @chaos/ui-server test    # 28 jest tests
+pnpm --filter @chaos/ui-server test    # 50 jest tests
 pnpm --filter @chaos/ui-web    test    # 36 vitest tests (zoneless Angular)
 ```
 
@@ -279,12 +371,27 @@ In production:
 
 ## API
 
+### Read
+
 | Method | Path | Returns |
 |---|---|---|
 | `GET` | `/api/v1/health` | Boot status + uptime. |
 | `GET` | `/api/v1/experiments` | Paginated `ExperimentSummary[]`. Filter with `?state=`, `?target_app=`, `?from=`, `?to=`, `?limit=`, `?offset=`. |
 | `GET` | `/api/v1/experiments/:id` | Full `ExperimentRecord`. 404 if no such id. |
 | `GET` | `/api/v1/experiments/:id/control` | `ControlSignals` for an in-flight experiment (pause / abort flags). Cheap — one row, one query. |
+| `GET` | `/api/v1/aggregates/llm` | Cross-experiment LLM rollups (totals + by-agent + by-experiment). Optional `?from=`/`?to=` ISO-8601 datetime window. |
+| `GET` | `/api/v1/aggregates/findings` | Hypothesis class counts + confidence histogram + 50 most recent. |
+| `GET` | `/api/v1/aggregates/fixes` | Fix action counts + daily PR throughput + top-20 most-touched files. |
+| `GET` | `/api/v1/plans` | Plan files in the allowlisted directory (header fields only). |
+
+### Control plane
+
+| Method | Path | Effect |
+|---|---|---|
+| `POST` | `/api/v1/experiments/:id/pause` | Sets `pause_requested = 1`. 204. |
+| `POST` | `/api/v1/experiments/:id/resume` | Clears `pause_requested`. 204. |
+| `POST` | `/api/v1/experiments/:id/abort` | Body: `{ "reason"?: AbortReason }` (default `user_kill`). Sets `abort_requested` + reason. 204. |
+| `POST` | `/api/v1/experiments/run` | Body: `{ "filename": string, "profile"?: "static"\|"hybrid"\|"llm" }`. Spawns `python -m orchestrator.main run …` detached, returns `{ experiment_id, title, target_app, profile }`. 202. |
 
 The TypeScript contracts in [`server/src/contracts/`](server/src/contracts/)
 mirror the Pydantic models in `../shared/contracts.py` field-for-field; if
@@ -302,10 +409,15 @@ mismatch reaches a release.
 - **Material 3 (Angular Material 21)** — a token-based theme system means
   the UI inherits decent-looking primitives for free, and re-skinning is
   one `mat.theme()` call away.
-- **better-sqlite3 (read-only + WAL)** — synchronous, zero-overhead reads,
-  never blocks the Python writer. The store is single-writer (the
-  orchestrator) plus multi-reader (this server, plus any ad-hoc
-  `sqlite3` shell).
+- **better-sqlite3** — synchronous, zero-overhead reads via a `readonly: true`
+  connection. A second writable connection is opened **only** for the three
+  control-signal columns the orchestrator polls; both halves agree those
+  columns are racy and idempotent so two writers can coexist on the same
+  row safely.
+- **Detached subprocess for `chaos run`** — the spawned orchestrator
+  uses `child.unref()`, so a UI server restart never kills an in-flight
+  chaos run. The orchestrator writes its audit trail straight to SQLite;
+  the UI just renders whatever shows up.
 - **pnpm workspace** — deterministic, fast, hard about phantom deps.
   Workspace mode unifies the two halves under one lockfile so a contract
   change can land in both packages atomically.
