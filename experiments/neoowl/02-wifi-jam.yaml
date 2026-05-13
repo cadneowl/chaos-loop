@@ -1,0 +1,41 @@
+# Phase 2 fault: full 2.4 GHz sweep. Indiscriminate -- blocks all WiFi
+# traffic, not just the DUT's link. Verifies the device degrades cleanly
+# to LoRa/cellular fallback rather than hanging on a dead WiFi
+# association.
+
+experiment_id: exp-200000000002
+title: "NeoOwl: 2.4 GHz sweep -- WiFi must fail over"
+target_app: neoowl
+
+faults:
+  - category: rf
+    name: wifi.jam
+    target_selector:
+      device: dut-1
+    parameters:
+      channel: 0
+      power_dbm: 10
+      sweep_period_ms: 100
+    duration_seconds: 30
+    requires_approval: false
+    rationale: |
+      Continuous-carrier emission across ISM. Validates that loss-of-WiFi
+      triggers the LoRa/cellular fallback and the detector keeps
+      reporting within budget.
+    hypothesis_id: h-neoowl-wifi-jam-002
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 300
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1

@@ -1,0 +1,36 @@
+# Phase 3 fault: hard supply cut for the duration, then restore.
+# Validates the capacitor-backed event buffer: any event captured in
+# the second before the cut must survive the power-cycle.
+
+experiment_id: exp-300000000007
+title: "NeoOwl: power cut -- event buffer must persist"
+target_app: neoowl
+
+faults:
+  - category: power
+    name: power.cut
+    target_selector:
+      device: dut-1
+    parameters: {}
+    duration_seconds: 5
+    requires_approval: false
+    rationale: |
+      Hard power cycle. The capacitor-backed event buffer must persist
+      any captured event across the outage.
+    hypothesis_id: h-neoowl-power-cut-007
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 30
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 120
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 2

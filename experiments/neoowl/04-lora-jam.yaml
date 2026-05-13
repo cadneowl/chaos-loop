@@ -1,0 +1,40 @@
+# Phase 2 fault: continuous LoRa carrier on the DUT's channel.
+# Verifies gateway-side packet-loss reporting and that the NVR's
+# store-and-forward buffer absorbs the resulting uplink stall.
+
+experiment_id: exp-200000000004
+title: "NeoOwl: LoRa jam -- store-and-forward must absorb"
+target_app: neoowl
+
+faults:
+  - category: rf
+    name: lora.jam
+    target_selector:
+      device: gateway-1
+    parameters:
+      frequency_hz: 915000000
+      bandwidth_hz: 125000
+      spreading_factor: 7
+      power_dbm: 14
+    duration_seconds: 30
+    requires_approval: false
+    rationale: |
+      Block the LoRa uplink and confirm the gateway's buffer absorbs
+      the stall without dropping security events on the floor.
+    hypothesis_id: h-neoowl-lora-jam-004
+
+safety:
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 300
+
+quiet_window_pre_seconds: 1
+quiet_window_post_seconds: 1
