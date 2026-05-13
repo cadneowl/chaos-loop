@@ -1,0 +1,75 @@
+:host { display: block; padding: 1rem 0; }
+
+.diagnosis { display: flex; flex-direction: column; gap: 1.5rem; }
+
+.empty {
+  padding: 2rem; text-align: center; color: #64748b;
+  background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  font-size: 0.85rem;
+  background: white;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.label {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.7rem; color: #64748b; text-transform: lowercase;
+}
+
+.hypotheses { display: flex; flex-direction: column; gap: 1rem; }
+
+.hypothesis mat-card-title {
+  font-size: 1rem;
+  display: flex; align-items: baseline; gap: 0.75rem;
+}
+
+.rank {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.85rem; color: #94a3b8;
+}
+
+h5 {
+  margin: 1rem 0 0.35rem 0;
+  font-size: 0.75rem; font-weight: 600;
+  color: #475569; text-transform: lowercase;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+.paths, .evidence {
+  margin: 0; padding-left: 1.2rem;
+  font-size: 0.85rem;
+}
+
+.paths code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.8rem; color: #0f172a;
+}
+
+.evidence li { margin-bottom: 0.35rem; }
+
+.dim { color: #94a3b8; font-size: 0.85rem; font-style: italic; }
+
+// Material 3 chips render their internal MDC structure with CSS custom
+// properties; targeting `background-color` on the host has no effect.
+// Override the actual MDC tokens instead.
+.chip-confidence-high {
+  --mdc-chip-elevated-container-color: #dcfce7;
+  --mdc-chip-label-text-color: #166534;
+}
+
+.chip-confidence-medium {
+  --mdc-chip-elevated-container-color: #fef3c7;
+  --mdc-chip-label-text-color: #92400e;
+}
+
+.chip-confidence-low {
+  --mdc-chip-elevated-container-color: #f1f5f9;
+  --mdc-chip-label-text-color: #64748b;
+}

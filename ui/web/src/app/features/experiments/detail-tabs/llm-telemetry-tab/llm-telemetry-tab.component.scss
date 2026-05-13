@@ -1,0 +1,134 @@
+:host { display: block; padding: 1rem 0; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.llm { display: flex; flex-direction: column; gap: 1.5rem; }
+
+.empty {
+  padding: 2rem; text-align: center; color: #64748b;
+  background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+}
+
+.totals mat-card mat-card-content {
+  display: flex; flex-direction: column; gap: 0.25rem;
+}
+
+.label {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.7rem; color: #64748b; text-transform: lowercase;
+}
+
+.value {
+  font-size: 1.4rem; font-weight: 600; color: #0f172a;
+}
+
+.value small {
+  font-size: 0.65rem; font-weight: 400; color: #94a3b8;
+  margin-left: 0.25rem;
+}
+
+h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem; font-weight: 600;
+  color: #475569;
+  text-transform: lowercase;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+table {
+  width: 100%; border-collapse: collapse;
+  background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+  overflow: hidden;
+}
+
+th, td {
+  padding: 0.5rem 0.75rem; text-align: left;
+  font-size: 0.8rem; border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+  background: #f1f5f9; color: #475569; font-weight: 600;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.7rem; text-transform: lowercase;
+}
+
+mat-expansion-panel { font-size: 0.85rem; }
+
+.inv-name {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+.failed-marker {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  background: #fee2e2; color: #991b1b;
+  border-radius: 4px; font-size: 0.65rem; font-weight: 600;
+}
+
+.metrics {
+  display: flex; gap: 1rem;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.summary dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0; font-size: 0.8rem;
+}
+
+.summary dt {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  color: #64748b;
+  font-size: 0.7rem;
+  text-transform: lowercase;
+}
+
+.error-text { color: #991b1b; }
+
+.tools { margin-top: 0.75rem; }
+
+.tool {
+  background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 6px; padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.tool-error { background: #fef2f2; border-color: #fecaca; }
+
+.tool summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tool code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.tool p {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: #475569;
+}

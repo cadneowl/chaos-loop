@@ -1,0 +1,98 @@
+<div class="overview">
+  <mat-card appearance="outlined" class="state-card">
+    <mat-card-content>
+      <div class="state-row">
+        <span class="label">state</span>
+        <span
+          class="state-badge"
+          [class]="stateClass(record().state)"
+          [attr.aria-label]="'Experiment state: ' + record().state"
+        >
+          {{ record().state }}
+        </span>
+        @if (record().abort_reason) {
+          <span class="abort-reason">{{ record().abort_reason }}</span>
+        }
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <div class="grid">
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>plan</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <dl>
+          <dt>title</dt><dd>{{ record().plan.title }}</dd>
+          <dt>target_app</dt><dd>{{ record().plan.target_app }}</dd>
+          @if (record().plan.target_repo) {
+            <dt>target_repo</dt><dd>{{ record().plan.target_repo }}</dd>
+          }
+          <dt>faults</dt>
+          <dd>
+            <mat-chip-set aria-label="Faults in this experiment plan">
+              @for (f of record().plan.faults; track f.name) {
+                <mat-chip>{{ f.name }} ({{ f.duration_seconds }}s)</mat-chip>
+              }
+            </mat-chip-set>
+          </dd>
+          <dt>namespace</dt><dd>{{ record().plan.safety.namespace }}</dd>
+          <dt>cluster_context</dt><dd>{{ record().plan.safety.cluster_context }}</dd>
+        </dl>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>timing</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <dl>
+          <dt>started</dt>
+          <dd>{{ record().started_at | date: 'medium' }}</dd>
+          <dt>finished</dt>
+          <dd>
+            @if (record().finished_at) {
+              {{ record().finished_at | date: 'medium' }}
+            } @else { — }
+          </dd>
+          <dt>duration</dt>
+          <dd>
+            @if (duration() !== null) {
+              {{ duration() | number: '1.0-1' }}s
+            } @else { — }
+          </dd>
+        </dl>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>budget</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <dl>
+          <dt>spent</dt>
+          <dd>${{ record().spend_usd | number: '1.2-2' }}</dd>
+          <dt>soft cap</dt>
+          <dd>${{ record().plan.budget.soft_cap_usd | number: '1.2-2' }}</dd>
+          <dt>hard cap</dt>
+          <dd>${{ record().plan.budget.hard_cap_usd | number: '1.2-2' }}</dd>
+          <dt>tokens</dt>
+          <dd>{{ totalTokens() | number }}</dd>
+        </dl>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>safety</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <dl>
+          <dt>max pods affected</dt>
+          <dd>{{ record().plan.safety.max_pods_affected }}</dd>
+          <dt>max duration</dt>
+          <dd>{{ record().plan.safety.max_duration_seconds }}s</dd>
+          <dt>multi-fault</dt>
+          <dd>{{ record().plan.safety.allow_multi_fault ? 'allowed' : 'forbidden' }}</dd>
+          <dt>ns annotation</dt>
+          <dd>{{ record().plan.safety.require_namespace_annotation ? 'required' : 'not required' }}</dd>
+        </dl>
+      </mat-card-content>
+    </mat-card>
+  </div>
+</div>

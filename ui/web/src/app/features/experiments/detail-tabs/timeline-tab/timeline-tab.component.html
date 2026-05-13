@@ -1,0 +1,26 @@
+<div class="timeline">
+  @if (!hasEntries()) {
+    <p class="empty">No timeline entries yet.</p>
+  } @else {
+    <ol class="entries" aria-label="Experiment timeline">
+      @for (entry of entries(); track $index) {
+        <li [class.kind-chaos]="entry.kind === 'chaos'" [class.failed]="!entry.ok">
+          <span class="time">
+            +{{ offsetSeconds(entry) | number: '1.1-1' }}s
+            <small>{{ entry.timestamp | date: 'HH:mm:ss.SSS' }}</small>
+          </span>
+          <span class="kind-marker">
+            @if (entry.kind === 'chaos') { ◣ } @else { ▸ }
+          </span>
+          <span class="label">{{ entry.label }}</span>
+          @if (entry.duration_ms !== null) {
+            <span class="duration">{{ entry.duration_ms | number: '1.0-0' }}ms</span>
+          }
+          @if (entry.detail) {
+            <span class="detail">{{ entry.detail }}</span>
+          }
+        </li>
+      }
+    </ol>
+  }
+</div>

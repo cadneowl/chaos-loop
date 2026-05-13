@@ -1,0 +1,136 @@
+<div class="llm">
+  @if (!hasInvocations()) {
+    <p class="empty">No agent invocations were recorded for this experiment.</p>
+  } @else {
+    <section class="totals">
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <span class="label">total spend</span>
+          <span class="value">${{ totals().spend | number: '1.4-4' }}</span>
+        </mat-card-content>
+      </mat-card>
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <span class="label">prompt tokens</span>
+          <span class="value">{{ totals().prompt | number }}</span>
+        </mat-card-content>
+      </mat-card>
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <span class="label">completion tokens</span>
+          <span class="value">{{ totals().completion | number }}</span>
+        </mat-card-content>
+      </mat-card>
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <span class="label">invocations</span>
+          <span class="value">
+            {{ totals().invocations_with_llm }} / {{ totals().invocations }}
+            <small>with LLM</small>
+          </span>
+        </mat-card-content>
+      </mat-card>
+      <mat-card appearance="outlined">
+        <mat-card-content>
+          <span class="label">tool calls</span>
+          <span class="value">{{ totals().tool_calls | number }}</span>
+        </mat-card-content>
+      </mat-card>
+    </section>
+
+    <section class="by-agent">
+      <h4 id="by-agent-heading">by agent</h4>
+      <table aria-labelledby="by-agent-heading">
+        <caption class="sr-only">LLM spend and token usage broken down by agent</caption>
+        <thead>
+          <tr>
+            <th>agent</th>
+            <th>invocations</th>
+            <th>spend</th>
+            <th>prompt</th>
+            <th>completion</th>
+            <th>tool calls</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of byAgent(); track row.agent) {
+            <tr>
+              <td>{{ row.agent }}</td>
+              <td>{{ row.invocations }}</td>
+              <td>${{ row.spend_usd | number: '1.4-4' }}</td>
+              <td>{{ row.prompt_tokens | number }}</td>
+              <td>{{ row.completion_tokens | number }}</td>
+              <td>{{ row.tool_calls }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+
+    <section class="invocations">
+      <h4>every invocation</h4>
+      <mat-accordion>
+        @for (inv of invocations(); track inv.started_at_ms) {
+          <mat-expansion-panel>
+            <mat-expansion-panel-header>
+              <mat-panel-title>
+                <span class="inv-name">{{ inv.agent }}.{{ inv.method }}</span>
+                @if (!inv.ok) { <span class="failed-marker">FAILED</span> }
+              </mat-panel-title>
+              <mat-panel-description>
+                <span class="metrics">
+                  @if (inv.duration_ms !== null && inv.duration_ms !== undefined) {
+                    <span>{{ inv.duration_ms | number: '1.0-0' }}ms</span>
+                  }
+                  <span>
+                    {{ formatTokens(inv.prompt_tokens) }} / {{ formatTokens(inv.completion_tokens) }} tok
+                  </span>
+                  @if (inv.spend_usd !== null && inv.spend_usd !== undefined) {
+                    <span>${{ inv.spend_usd | number: '1.4-4' }}</span>
+                  }
+                  <span>{{ inv.tool_calls.length }} tool calls</span>
+                </span>
+              </mat-panel-description>
+            </mat-expansion-panel-header>
+
+            <div class="summary">
+              <dl>
+                @if (inv.input_summary) {
+                  <dt>input</dt><dd>{{ inv.input_summary }}</dd>
+                }
+                @if (inv.output_summary) {
+                  <dt>output</dt><dd>{{ inv.output_summary }}</dd>
+                }
+                @if (inv.error) {
+                  <dt>error</dt><dd class="error-text">{{ inv.error }}</dd>
+                }
+              </dl>
+            </div>
+
+            @if (inv.tool_calls.length > 0) {
+              <div class="tools">
+                <h5>tool calls</h5>
+                @for (tc of inv.tool_calls; track $index) {
+                  <details class="tool" [class.tool-error]="tc.is_error">
+                    <summary>
+                      <code>{{ tc.name }}</code>
+                      @if (tc.is_error) { <span class="error-text">error</span> }
+                    </summary>
+                    <p class="args">
+                      <strong>args:</strong>
+                      <code>{{ tc.arguments }}</code>
+                    </p>
+                    <p class="result">
+                      <strong>result:</strong>
+                      <code>{{ tc.result_preview }}</code>
+                    </p>
+                  </details>
+                }
+              </div>
+            }
+          </mat-expansion-panel>
+        }
+      </mat-accordion>
+    </section>
+  }
+</div>

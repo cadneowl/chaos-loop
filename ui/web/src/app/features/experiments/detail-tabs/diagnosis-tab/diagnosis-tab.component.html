@@ -1,0 +1,61 @@
+<div class="diagnosis">
+  @if (!hasDiagnosis()) {
+    <p class="empty">
+      No diagnosis was run for this experiment — usually because verify
+      reported the system as steady (no regression to explain).
+    </p>
+  } @else {
+    <section class="meta">
+      <span class="label">run_id</span>
+      <code>{{ diagnosis()!.run_id }}</code>
+      <span class="label">started</span>
+      <span>{{ diagnosis()!.started_at | date: 'medium' }}</span>
+      @if (diagnosis()!.notes) {
+        <span class="label">notes</span>
+        <span>{{ diagnosis()!.notes }}</span>
+      }
+    </section>
+
+    <section class="hypotheses">
+      @for (h of hypotheses(); track $index; let i = $index) {
+        <mat-card appearance="outlined" class="hypothesis">
+          <mat-card-header>
+            <mat-card-title>
+              <span class="rank">#{{ i + 1 }}</span>
+              {{ h.summary }}
+            </mat-card-title>
+            <mat-card-subtitle>
+              <mat-chip-set aria-label="Hypothesis classification">
+                <mat-chip>fix class: {{ h.suggested_fix_class }}</mat-chip>
+                <mat-chip [class]="'chip-' + confidenceClass(h.confidence)">
+                  confidence {{ h.confidence | number: '1.2-2' }}
+                </mat-chip>
+              </mat-chip-set>
+            </mat-card-subtitle>
+          </mat-card-header>
+          <mat-card-content>
+            @if (h.affected_paths.length > 0) {
+              <h5>affected paths</h5>
+              <ul class="paths">
+                @for (p of h.affected_paths; track p) {
+                  <li><code>{{ p }}</code></li>
+                }
+              </ul>
+            }
+
+            <h5>evidence</h5>
+            @if (h.evidence.length === 0) {
+              <p class="dim">No evidence cited.</p>
+            } @else {
+              <ul class="evidence">
+                @for (e of h.evidence; track e) {
+                  <li>{{ e }}</li>
+                }
+              </ul>
+            }
+          </mat-card-content>
+        </mat-card>
+      }
+    </section>
+  }
+</div>

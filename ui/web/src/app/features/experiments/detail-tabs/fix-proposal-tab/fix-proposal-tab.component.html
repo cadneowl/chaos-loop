@@ -1,0 +1,87 @@
+<div class="fix">
+  @if (!hasProposal()) {
+    <p class="empty">
+      No fix proposal was generated — this usually means verify reported
+      the system as steady (no regression to fix) or diagnosis returned
+      no actionable hypothesis.
+    </p>
+  } @else {
+    @let p = proposal()!;
+    <mat-card appearance="outlined" class="header-card">
+      <mat-card-content>
+        <div class="action-row">
+          <span class="label">action</span>
+          <span
+            class="action-badge"
+            [class]="actionClass(p.action)"
+            [attr.aria-label]="'Fix action: ' + p.action"
+          >
+            {{ p.action }}
+          </span>
+          @if (p.is_draft) {
+            <span class="draft-marker">DRAFT</span>
+          }
+          <span class="label">confidence</span>
+          <span class="confidence">{{ p.confidence | number: '1.2-2' }}</span>
+        </div>
+        @if (prHref(); as href) {
+          <p class="pr-link">
+            <a [href]="href" target="_blank" rel="noopener noreferrer">
+              open PR ↗
+            </a>
+            <code>{{ href }}</code>
+          </p>
+        } @else if (p.pr_url) {
+          <p class="pr-link unsafe">
+            <span>blocked — pr_url is not http(s):</span>
+            <code>{{ p.pr_url }}</code>
+          </p>
+        }
+      </mat-card-content>
+    </mat-card>
+
+    @if (p.reasoning) {
+      <mat-card appearance="outlined">
+        <mat-card-header><mat-card-title>reasoning</mat-card-title></mat-card-header>
+        <mat-card-content>
+          <pre class="reasoning">{{ p.reasoning }}</pre>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    @if (p.files_touched.length > 0) {
+      <mat-card appearance="outlined">
+        <mat-card-header>
+          <mat-card-title>files touched</mat-card-title>
+          <mat-card-subtitle>
+            @if (p.regression_test_added) {
+              <mat-chip-set aria-label="Fix attributes">
+                <mat-chip>regression test added</mat-chip>
+              </mat-chip-set>
+            }
+          </mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <ul class="files">
+            @for (f of p.files_touched; track f) {
+              <li><code>{{ f }}</code></li>
+            }
+          </ul>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <mat-card appearance="outlined" class="meta-card">
+      <mat-card-content>
+        <dl>
+          <dt>run_id</dt><dd><code>{{ p.run_id }}</code></dd>
+          <dt>started</dt><dd>{{ p.started_at | date: 'medium' }}</dd>
+          @if (p.finished_at) {
+            <dt>finished</dt>
+            <dd>{{ p.finished_at | date: 'medium' }}</dd>
+          }
+        </dl>
+      </mat-card-content>
+    </mat-card>
+  }
+</div>
