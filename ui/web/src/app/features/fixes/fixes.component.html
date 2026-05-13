@@ -1,0 +1,70 @@
+<div class="page">
+  <header>
+    <h2>Fix proposals</h2>
+    <p class="subtitle">What the fixer agent has done — by action, by day, by file.</p>
+  </header>
+
+  @if (aggregates.isLoading()) {
+    <p class="empty">Loading aggregates…</p>
+  } @else if (aggregates.error()) {
+    <p class="empty error">Failed to load fix aggregates. Is the orchestrator's SQLite store reachable?</p>
+  } @else if (aggregates.value(); as a) {
+    <section class="kpis" aria-label="Top-line totals">
+      <article>
+        <span class="label">fix proposals</span>
+        <span class="value">{{ a.totals.fix_proposals | number }}</span>
+      </article>
+      <article>
+        <span class="label">drafted PR</span>
+        <span class="value">
+          {{ a.totals.with_pr | number }}
+          @if (a.totals.fix_proposals > 0) {
+            <small>({{ a.totals.with_pr / a.totals.fix_proposals | percent: '1.0-0' }})</small>
+          }
+        </span>
+      </article>
+      <article>
+        <span class="label">w/ regression test</span>
+        <span class="value">
+          {{ a.totals.with_regression_test | number }}
+          @if (a.totals.fix_proposals > 0) {
+            <small>({{ a.totals.with_regression_test / a.totals.fix_proposals | percent: '1.0-0' }})</small>
+          }
+        </span>
+      </article>
+      <article>
+        <span class="label">mean confidence</span>
+        <span class="value">{{ a.totals.mean_confidence | number: '1.2-2' }}</span>
+      </article>
+    </section>
+
+    <section class="charts">
+      <article class="chart-card">
+        <h3>By action</h3>
+        @if (byActionOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No fix proposals yet.</p>
+        }
+      </article>
+
+      <article class="chart-card">
+        <h3>Daily throughput</h3>
+        @if (throughputOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No data yet.</p>
+        }
+      </article>
+
+      <article class="chart-card chart-wide">
+        <h3>Top files touched</h3>
+        @if (topFilesOptions(); as opts) {
+          <div echarts [options]="opts" class="chart-tall"></div>
+        } @else {
+          <p class="empty">No files touched yet.</p>
+        }
+      </article>
+    </section>
+  }
+</div>

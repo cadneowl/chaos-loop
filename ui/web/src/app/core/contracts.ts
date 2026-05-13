@@ -301,3 +301,65 @@ export interface ExperimentListResponse {
   limit: number;
   offset: number;
 }
+
+// =============================================================================
+// Cross-experiment aggregates (mirror of ui/server/src/aggregates/aggregates.types.ts)
+// =============================================================================
+
+export interface LlmAggregates {
+  totals: {
+    spend_usd: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    experiments: number;
+    invocations: number;
+    invocations_with_llm: number;
+  };
+  by_agent: Array<{
+    agent: string;
+    spend_usd: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    invocations: number;
+  }>;
+  by_experiment: Array<{
+    experiment_id: string;
+    title: string;
+    started_at: IsoDatetime;
+    spend_usd: number;
+    tokens: number;
+  }>;
+}
+
+export interface FindingsAggregates {
+  totals: {
+    experiments_with_diagnosis: number;
+    total_hypotheses: number;
+    mean_confidence: number;
+  };
+  by_fix_class: Array<{
+    fix_class: SuggestedFixClass;
+    count: number;
+    mean_confidence: number;
+  }>;
+  confidence_histogram: Array<{ bucket: string; count: number }>;
+  recent: Array<{
+    experiment_id: string;
+    summary: string;
+    confidence: number;
+    fix_class: SuggestedFixClass;
+    started_at: IsoDatetime;
+  }>;
+}
+
+export interface FixesAggregates {
+  totals: {
+    fix_proposals: number;
+    with_pr: number;
+    with_regression_test: number;
+    mean_confidence: number;
+  };
+  by_action: Array<{ action: FixAction; count: number }>;
+  by_file: Array<{ path: string; count: number }>;
+  by_day: Array<{ date: string; count: number }>;
+}

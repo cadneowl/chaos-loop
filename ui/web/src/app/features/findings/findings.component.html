@@ -1,0 +1,83 @@
+<div class="page">
+  <header>
+    <h2>Findings</h2>
+    <p class="subtitle">Diagnosis hypotheses across every regression the loop has explained.</p>
+  </header>
+
+  @if (aggregates.isLoading()) {
+    <p class="empty">Loading aggregates…</p>
+  } @else if (aggregates.error()) {
+    <p class="empty error">Failed to load findings aggregates. Is the orchestrator's SQLite store reachable?</p>
+  } @else if (aggregates.value(); as a) {
+    <section class="kpis" aria-label="Top-line totals">
+      <article>
+        <span class="label">experiments with diagnosis</span>
+        <span class="value">{{ a.totals.experiments_with_diagnosis | number }}</span>
+      </article>
+      <article>
+        <span class="label">total hypotheses</span>
+        <span class="value">{{ a.totals.total_hypotheses | number }}</span>
+      </article>
+      <article>
+        <span class="label">mean confidence</span>
+        <span class="value">{{ a.totals.mean_confidence | number: '1.2-2' }}</span>
+      </article>
+    </section>
+
+    <section class="charts">
+      <article class="chart-card">
+        <h3>By fix class</h3>
+        @if (byFixClassOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No diagnoses yet.</p>
+        }
+      </article>
+
+      <article class="chart-card">
+        <h3>Confidence distribution</h3>
+        @if (confidenceHistogramOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No data yet.</p>
+        }
+      </article>
+    </section>
+
+    <section class="recent" aria-labelledby="recent-heading">
+      <h3 id="recent-heading">Recent hypotheses</h3>
+      @if (a.recent.length === 0) {
+        <p class="empty">No diagnoses recorded yet.</p>
+      } @else {
+        <table>
+          <thead>
+            <tr>
+              <th>experiment</th>
+              <th>summary</th>
+              <th>fix class</th>
+              <th class="num">confidence</th>
+              <th>started</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of a.recent.slice(0, 20); track $index) {
+              <tr>
+                <td>
+                  <a [routerLink]="['/experiments', row.experiment_id]"><code>{{ row.experiment_id }}</code></a>
+                </td>
+                <td class="summary">{{ row.summary }}</td>
+                <td><code>{{ row.fix_class }}</code></td>
+                <td class="num">
+                  <span class="conf-pill" [class]="'conf-' + confidenceClass(row.confidence)">
+                    {{ row.confidence | number: '1.2-2' }}
+                  </span>
+                </td>
+                <td>{{ row.started_at | date: 'short' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
+  }
+</div>

@@ -1,0 +1,79 @@
+<div class="page">
+  <header>
+    <h2>Dashboard</h2>
+    <p class="subtitle">Cross-experiment snapshot — LLM spend, what fragility patterns repeat, and what the fixer is shipping.</p>
+  </header>
+
+  @if (data.isLoading()) {
+    <p class="empty">Loading aggregates…</p>
+  } @else if (data.error()) {
+    <p class="empty error">Failed to load dashboard. Is the orchestrator's SQLite store reachable?</p>
+  } @else if (data.value(); as d) {
+    <section class="three-up">
+      <article class="section-card">
+        <header>
+          <h3>LLM</h3>
+          <a routerLink="/llm" class="more">view details →</a>
+        </header>
+        <div class="kpi-row">
+          <div><span class="label">spend</span><span class="value">{{ d.llm.totals.spend_usd | currency: 'USD' : 'symbol' : '1.4-4' }}</span></div>
+          <div><span class="label">tokens</span><span class="value">{{ d.llm.totals.prompt_tokens + d.llm.totals.completion_tokens | number }}</span></div>
+          <div><span class="label">experiments</span><span class="value">{{ d.llm.totals.experiments | number }}</span></div>
+        </div>
+        @if (spendByExperimentOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty mini">No LLM data yet.</p>
+        }
+      </article>
+
+      <article class="section-card">
+        <header>
+          <h3>Findings</h3>
+          <a routerLink="/findings" class="more">view details →</a>
+        </header>
+        <div class="kpi-row">
+          <div><span class="label">w/ diagnosis</span><span class="value">{{ d.findings.totals.experiments_with_diagnosis | number }}</span></div>
+          <div><span class="label">hypotheses</span><span class="value">{{ d.findings.totals.total_hypotheses | number }}</span></div>
+          <div><span class="label">mean conf.</span><span class="value">{{ d.findings.totals.mean_confidence | number: '1.2-2' }}</span></div>
+        </div>
+        @if (fixClassOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty mini">No diagnoses yet.</p>
+        }
+      </article>
+
+      <article class="section-card">
+        <header>
+          <h3>Fixes</h3>
+          <a routerLink="/fixes" class="more">view details →</a>
+        </header>
+        <div class="kpi-row">
+          <div><span class="label">proposals</span><span class="value">{{ d.fixes.totals.fix_proposals | number }}</span></div>
+          <div><span class="label">w/ PR</span><span class="value">
+            {{ d.fixes.totals.with_pr | number }}
+            @if (d.fixes.totals.fix_proposals > 0) {
+              <small>({{ d.fixes.totals.with_pr / d.fixes.totals.fix_proposals | percent: '1.0-0' }})</small>
+            }
+          </span></div>
+          <div><span class="label">w/ test</span><span class="value">
+            {{ d.fixes.totals.with_regression_test | number }}
+            @if (d.fixes.totals.fix_proposals > 0) {
+              <small>({{ d.fixes.totals.with_regression_test / d.fixes.totals.fix_proposals | percent: '1.0-0' }})</small>
+            }
+          </span></div>
+        </div>
+        @if (throughputOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty mini">No fix proposals yet.</p>
+        }
+      </article>
+    </section>
+
+    <p class="see-also">
+      Looking for one specific run? → <a routerLink="/experiments">all experiments</a>
+    </p>
+  }
+</div>

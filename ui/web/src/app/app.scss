@@ -14,12 +14,19 @@
 
 header {
   display: flex;
-  align-items: baseline;
-  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
   padding: 1rem 2rem;
   background: #0f172a;
   color: #f8fafc;
   border-bottom: 4px solid #f59e0b;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
 }
 
 header h1 {
@@ -33,6 +40,32 @@ header h1 {
   font-size: 0.75rem;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
   opacity: 0.6;
+}
+
+nav {
+  display: flex;
+  gap: 0.25rem;
+}
+
+nav a {
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  transition: background 120ms, color 120ms;
+}
+
+nav a:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+}
+
+nav a.active {
+  background: #f59e0b;
+  color: #0f172a;
+  font-weight: 600;
 }
 
 footer {

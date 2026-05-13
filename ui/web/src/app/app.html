@@ -1,7 +1,21 @@
 <main class="shell">
   <header>
-    <h1>chaos · reports</h1>
-    <span class="version">v{{ version() }}</span>
+    <div class="brand">
+      <h1>chaos · reports</h1>
+      <span class="version">v{{ version() }}</span>
+    </div>
+    <nav aria-label="Top-level sections">
+      <a
+        routerLink="/"
+        routerLinkActive="active"
+        ariaCurrentWhenActive="page"
+        [routerLinkActiveOptions]="{ exact: true }"
+      >Dashboard</a>
+      <a routerLink="/experiments" routerLinkActive="active" ariaCurrentWhenActive="page">Experiments</a>
+      <a routerLink="/llm" routerLinkActive="active" ariaCurrentWhenActive="page">LLM</a>
+      <a routerLink="/findings" routerLinkActive="active" ariaCurrentWhenActive="page">Findings</a>
+      <a routerLink="/fixes" routerLinkActive="active" ariaCurrentWhenActive="page">Fixes</a>
+    </nav>
   </header>
   <router-outlet />
   <footer>

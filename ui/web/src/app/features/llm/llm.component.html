@@ -1,0 +1,92 @@
+<div class="page">
+  <header>
+    <h2>LLM telemetry</h2>
+    <p class="subtitle">Spend, tokens, and per-agent rollups across every experiment in the store.</p>
+  </header>
+
+  @if (aggregates.isLoading()) {
+    <p class="empty">Loading aggregates…</p>
+  } @else if (aggregates.error()) {
+    <p class="empty error">Failed to load LLM aggregates. Is the orchestrator's SQLite store reachable?</p>
+  } @else if (aggregates.value(); as a) {
+    <section class="kpis" aria-label="Top-line totals">
+      <article>
+        <span class="label">total spend</span>
+        <span class="value">{{ a.totals.spend_usd | currency: 'USD' : 'symbol' : '1.4-4' }}</span>
+      </article>
+      <article>
+        <span class="label">prompt tokens</span>
+        <span class="value">{{ a.totals.prompt_tokens | number }}</span>
+      </article>
+      <article>
+        <span class="label">completion tokens</span>
+        <span class="value">{{ a.totals.completion_tokens | number }}</span>
+      </article>
+      <article>
+        <span class="label">experiments</span>
+        <span class="value">{{ a.totals.experiments | number }}</span>
+      </article>
+      <article>
+        <span class="label">invocations</span>
+        <span class="value">{{ a.totals.invocations_with_llm | number }} / {{ a.totals.invocations | number }} <small>with LLM</small></span>
+      </article>
+    </section>
+
+    <section class="charts">
+      <article class="chart-card chart-wide">
+        <h3>Spend per experiment</h3>
+        @if (spendOverTimeOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No data yet.</p>
+        }
+      </article>
+
+      <article class="chart-card">
+        <h3>Spend by agent</h3>
+        @if (perAgentOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No LLM-using invocations yet.</p>
+        }
+      </article>
+
+      <article class="chart-card">
+        <h3>Tokens vs cost</h3>
+        @if (tokensVsCostOptions(); as opts) {
+          <div echarts [options]="opts" class="chart"></div>
+        } @else {
+          <p class="empty">No data yet.</p>
+        }
+      </article>
+    </section>
+
+    <section class="recent" aria-labelledby="recent-heading">
+      <h3 id="recent-heading">Recent experiments</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>experiment</th>
+            <th>title</th>
+            <th>started</th>
+            <th class="num">spend</th>
+            <th class="num">tokens</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of a.by_experiment.slice(0, 20); track row.experiment_id) {
+            <tr>
+              <td>
+                <a [routerLink]="['/experiments', row.experiment_id]"><code>{{ row.experiment_id }}</code></a>
+              </td>
+              <td class="title">{{ row.title }}</td>
+              <td>{{ row.started_at | date: 'short' }}</td>
+              <td class="num">{{ row.spend_usd | currency: 'USD' : 'symbol' : '1.4-4' }}</td>
+              <td class="num">{{ row.tokens | number }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+  }
+</div>

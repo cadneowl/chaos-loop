@@ -74,6 +74,26 @@ export class SqliteReaderService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Stream every experiment that matches the filter through a callback,
+   * pulling pages of 500 from SQLite. Use this for cross-experiment
+   * aggregation — `listExperiments` is page-bounded for HTTP responses.
+   */
+  forEachExperiment(
+    opts: ListOptions,
+    visit: (r: ExperimentRecord) => void,
+  ): void {
+    if (!this.db) return;
+    const page = 500;
+    let offset = 0;
+    while (true) {
+      const batch = this.listExperiments({ ...opts, limit: page, offset });
+      for (const r of batch) visit(r);
+      if (batch.length < page) return;
+      offset += page;
+    }
+  }
+
+  /**
    * Page through experiments, newest first. Filters compose with AND.
    * Limit is capped at 500 to keep one-page responses bounded.
    */

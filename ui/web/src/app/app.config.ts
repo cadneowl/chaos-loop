@@ -6,6 +6,7 @@ import {
 import { provideHttpClient, withFetch } from '@angular/common/http';
 import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { provideEchartsCore } from 'ngx-echarts';
 
 import { routes } from './app.routes';
 
@@ -21,5 +22,7 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(withFetch()),
     // Material components rely on @angular/animations.
     provideAnimations(),
+    // ECharts loaded lazily on first use so the initial bundle stays small.
+    provideEchartsCore({ echarts: () => import('echarts') }),
   ],
 };

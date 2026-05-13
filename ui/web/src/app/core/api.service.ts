@@ -7,6 +7,9 @@ import type {
   ExperimentListResponse,
   ExperimentRecord,
   ExperimentState,
+  FindingsAggregates,
+  FixesAggregates,
+  LlmAggregates,
 } from './contracts';
 
 /**
@@ -41,6 +44,39 @@ export class ApiService {
   getControl(id: string): Observable<ControlSignals> {
     return this.http.get<ControlSignals>(`${this.base}/experiments/${id}/control`);
   }
+
+  /** GET /aggregates/llm — cross-experiment spend / token / agent rollups. */
+  getLlmAggregates(window: WindowOptions = {}): Observable<LlmAggregates> {
+    return this.http.get<LlmAggregates>(`${this.base}/aggregates/llm`, {
+      params: windowToParams(window),
+    });
+  }
+
+  /** GET /aggregates/findings — diagnosis hypothesis class + confidence rollups. */
+  getFindingsAggregates(window: WindowOptions = {}): Observable<FindingsAggregates> {
+    return this.http.get<FindingsAggregates>(`${this.base}/aggregates/findings`, {
+      params: windowToParams(window),
+    });
+  }
+
+  /** GET /aggregates/fixes — fix-proposal action / file / throughput rollups. */
+  getFixesAggregates(window: WindowOptions = {}): Observable<FixesAggregates> {
+    return this.http.get<FixesAggregates>(`${this.base}/aggregates/fixes`, {
+      params: windowToParams(window),
+    });
+  }
+}
+
+function windowToParams(window: WindowOptions): HttpParams {
+  let params = new HttpParams();
+  if (window.from) params = params.set('from', window.from);
+  if (window.to) params = params.set('to', window.to);
+  return params;
+}
+
+export interface WindowOptions {
+  from?: string;
+  to?: string;
 }
 
 export interface ListOptions {
