@@ -70,7 +70,7 @@
     <section class="invocations">
       <h4>every invocation</h4>
       <mat-accordion>
-        @for (inv of invocations(); track inv.started_at_ms) {
+        @for (inv of invocations(); track $index) {
           <mat-expansion-panel>
             <mat-expansion-panel-header>
               <mat-panel-title>
