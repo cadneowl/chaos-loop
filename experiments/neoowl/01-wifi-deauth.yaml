@@ -1,0 +1,57 @@
+# Phase 1 golden plan — verify NeoOwl detects a WiFi deauth flood within
+# the latency budget. Runs against a simulated DUT for CI; a real bench
+# (Phase 2) swaps `SimulatedHardwareIO` for `HilHardwareIO` without
+# touching the plan.
+#
+# Steady state expectation: detector_latency_p95_ms < 500
+# Under attack:           detector_latency_p95_ms should exceed 500 so the
+#                         tester's verify() flags the regression
+#
+# The detector_latency_p95_ms threshold is a hard line — anything above
+# this and the verify probes fire as "system isn't steady". That's the
+# regression we want the diagnostician to explain in subsequent phases.
+
+experiment_id: exp-0fea7ed0eaf0
+title: "NeoOwl: detect WiFi deauth flood within budget"
+target_app: neoowl
+target_repo: https://github.com/cadneowl/neoowl-defense
+
+faults:
+  - category: rf
+    name: wifi.deauth
+    target_selector:
+      device: dut-1
+    parameters:
+      target_bssid: auto
+      channel: 0
+      intensity: high
+    duration_seconds: 30
+    requires_approval: false
+    rationale: |
+      Reproduce the cheapest, most common physical-security bypass:
+      a $40 deauth flood from a clone WiFi pineapple. If the detector
+      doesn't fire within budget, the marketing claim
+      "designed for the moment everything else goes dark" is wrong.
+    hypothesis_id: h-neoowl-wifi-deauth-001
+
+safety:
+  # `bench-hardware` doesn't contain any of the production-prefix forbidden
+  # substrings (prod, production, live, main), so the cluster-allowed gate
+  # passes without further config.
+  cluster_context: bench-hardware
+  namespace: bench
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  allow_multi_fault: false
+  require_namespace_annotation: false
+
+budget:
+  # Hardware-bench runs don't burn LLM credits in the static profile, so
+  # the budget is symbolic. Keep the soft cap nonzero so the schema
+  # validator (which requires > 0) is happy.
+  soft_cap_usd: 0.01
+  hard_cap_usd: 0.5
+  wall_clock_seconds: 300
+
+quiet_window_pre_seconds: 2
+quiet_window_post_seconds: 2
