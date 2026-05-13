@@ -56,20 +56,21 @@ h5 {
 
 .dim { color: #94a3b8; font-size: 0.85rem; font-style: italic; }
 
-// Material 3 chips render their internal MDC structure with CSS custom
-// properties; targeting `background-color` on the host has no effect.
-// Override the actual MDC tokens instead.
+// Material 21 chips compute background from `--mat-chip-elevated-container-color`
+// (mat- prefix; the older `--mdc-chip-elevated-container-color` was renamed).
+// Setting `background-color` directly on the host has no effect because the
+// internal rule .mat-mdc-standard-chip uses `var(--mat-chip-elevated-…)` first.
 .chip-confidence-high {
-  --mdc-chip-elevated-container-color: #dcfce7;
-  --mdc-chip-label-text-color: #166534;
+  --mat-chip-elevated-container-color: #dcfce7;
+  --mat-chip-label-text-color: #166534;
 }
 
 .chip-confidence-medium {
-  --mdc-chip-elevated-container-color: #fef3c7;
-  --mdc-chip-label-text-color: #92400e;
+  --mat-chip-elevated-container-color: #fef3c7;
+  --mat-chip-label-text-color: #92400e;
 }
 
 .chip-confidence-low {
-  --mdc-chip-elevated-container-color: #f1f5f9;
-  --mdc-chip-label-text-color: #64748b;
+  --mat-chip-elevated-container-color: #f1f5f9;
+  --mat-chip-label-text-color: #64748b;
 }
