@@ -3,6 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
 import type {
+  AbortReason,
   ControlSignals,
   ExperimentListResponse,
   ExperimentRecord,
@@ -10,6 +11,9 @@ import type {
   FindingsAggregates,
   FixesAggregates,
   LlmAggregates,
+  PlanFile,
+  RunProfile,
+  RunResponse,
 } from './contracts';
 
 /**
@@ -64,6 +68,33 @@ export class ApiService {
     return this.http.get<FixesAggregates>(`${this.base}/aggregates/fixes`, {
       params: windowToParams(window),
     });
+  }
+
+  // ---------------------------------------------------------------- control
+
+  /** POST /experiments/:id/pause */
+  pauseExperiment(id: string): Observable<void> {
+    return this.http.post<void>(`${this.base}/experiments/${id}/pause`, {});
+  }
+
+  /** POST /experiments/:id/resume */
+  resumeExperiment(id: string): Observable<void> {
+    return this.http.post<void>(`${this.base}/experiments/${id}/resume`, {});
+  }
+
+  /** POST /experiments/:id/abort */
+  abortExperiment(id: string, reason: AbortReason = 'user_kill'): Observable<void> {
+    return this.http.post<void>(`${this.base}/experiments/${id}/abort`, { reason });
+  }
+
+  /** GET /plans */
+  listPlans(): Observable<PlanFile[]> {
+    return this.http.get<PlanFile[]>(`${this.base}/plans`);
+  }
+
+  /** POST /experiments/run */
+  runExperiment(filename: string, profile: RunProfile = 'static'): Observable<RunResponse> {
+    return this.http.post<RunResponse>(`${this.base}/experiments/run`, { filename, profile });
   }
 }
 

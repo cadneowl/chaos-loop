@@ -425,3 +425,10 @@ export interface ExperimentListResponse {
   limit: number;
   offset: number;
 }
+
+// =============================================================================
+// Control plane
+// =============================================================================
+
+/** Strategy mix the orchestrator accepts on `chaos run --profile`. */
+export type RunProfile = 'static' | 'hybrid' | 'llm';

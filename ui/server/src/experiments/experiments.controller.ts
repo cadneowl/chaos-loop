@@ -1,6 +1,18 @@
-import { Controller, DefaultValuePipe, Get, ParseIntPipe, Param, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  DefaultValuePipe,
+  Get,
+  HttpCode,
+  ParseIntPipe,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 
 import type {
+  AbortReason,
   ControlSignals,
   ExperimentListResponse,
   ExperimentRecord,
@@ -8,10 +20,14 @@ import type {
   ExperimentSummary,
 } from '../contracts';
 import { SqliteReaderService } from '../store/sqlite-reader.service';
+import { SqliteWriterService } from '../store/sqlite-writer.service';
 
 @Controller('experiments')
 export class ExperimentsController {
-  constructor(private readonly store: SqliteReaderService) {}
+  constructor(
+    private readonly store: SqliteReaderService,
+    private readonly writer: SqliteWriterService,
+  ) {}
 
   /**
    * Paginated list of experiments. Default sort is started_at DESC.
@@ -61,7 +77,60 @@ export class ExperimentsController {
   control(@Param('id') id: string): ControlSignals {
     return this.store.getControlSignals(id);
   }
+
+  /**
+   * Request a graceful pause at the next state-transition boundary. The
+   * orchestrator polls the flag once per second and parks the experiment
+   * in PAUSED until the matching resume call clears it. No-op on a
+   * terminal experiment.
+   */
+  @Post(':id/pause')
+  @HttpCode(204)
+  pause(@Param('id') id: string): void {
+    // Ensure the row exists; throws 404 with the same shape as detail().
+    this.store.getExperiment(id);
+    this.writer.setPause(id, true);
+  }
+
+  /** Clear the pause flag. The orchestrator resumes at the next poll. */
+  @Post(':id/resume')
+  @HttpCode(204)
+  resume(@Param('id') id: string): void {
+    this.store.getExperiment(id);
+    this.writer.setPause(id, false);
+  }
+
+  /**
+   * Request a graceful abort. The orchestrator picks up the flag, cleans
+   * up any in-flight chaos CRDs, and transitions to ABORTED with the
+   * supplied reason. Default reason is `user_kill`.
+   */
+  @Post(':id/abort')
+  @HttpCode(204)
+  abort(@Param('id') id: string, @Body() body: AbortRequestBody = {}): void {
+    this.store.getExperiment(id);
+    const reason: AbortReason = body.reason ?? 'user_kill';
+    if (!ABORT_REASONS.has(reason)) {
+      throw new BadRequestException(`invalid abort reason: ${reason}`);
+    }
+    this.writer.requestAbort(id, reason);
+  }
 }
+
+interface AbortRequestBody {
+  reason?: AbortReason;
+}
+
+const ABORT_REASONS: ReadonlySet<AbortReason> = new Set<AbortReason>([
+  'baseline_unhealthy',
+  'slo_breach',
+  'budget_exceeded',
+  'user_kill',
+  'blast_radius_violation',
+  'cluster_denied',
+  'approval_rejected',
+  'agent_failure',
+]);
 
 function toSummary(r: ExperimentRecord): ExperimentSummary {
   const started = new Date(r.started_at);

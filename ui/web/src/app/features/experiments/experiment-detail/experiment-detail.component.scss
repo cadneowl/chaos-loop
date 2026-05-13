@@ -36,6 +36,35 @@ header h2 {
   font-size: 0.85rem;
 }
 
+header { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.title-row { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.actions .glyph {
+  font-size: 0.95rem;
+  margin-right: 0.25rem;
+  vertical-align: middle;
+}
+
+.action-banner {
+  margin: 0.5rem 0 1rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #f1f5f9;
+  border-left: 3px solid #2563eb;
+  font-size: 0.85rem;
+  color: #0f172a;
+}
+
+.action-banner.error {
+  background: #fef2f2;
+  border-left-color: #b91c1c;
+  color: #991b1b;
+}
+
 .empty {
   padding: 2rem;
   text-align: center;

@@ -1,0 +1,77 @@
+<div class="page">
+  <header>
+    <h2>Run a new experiment</h2>
+    <p class="subtitle">
+      Server spawns <code>chaos run &lt;plan&gt; --profile &lt;mode&gt;</code>
+      from a plan in the allowlisted <code>experiments/examples/</code> directory.
+      Detached — the orchestrator survives a UI restart.
+    </p>
+  </header>
+
+  @if (plans.isLoading()) {
+    <p class="empty">Loading plans…</p>
+  } @else if (plans.error()) {
+    <p class="empty error">Failed to load the plan list. Is the UI server running?</p>
+  } @else if (plans.value(); as items) {
+    @if (items.length === 0) {
+      <p class="empty">
+        No plan files found. Drop a YAML in <code>experiments/examples/</code>
+        or set <code>CHAOS_PLANS_DIR</code> to point somewhere else.
+      </p>
+    } @else {
+      <ul class="plans" role="radiogroup" aria-label="Available plans">
+        @for (plan of items; track plan.filename) {
+          <li
+            [class.selected]="selected() === plan.filename"
+            role="radio"
+            [attr.aria-checked]="selected() === plan.filename"
+            tabindex="0"
+            (click)="select(plan.filename)"
+            (keydown.enter)="select(plan.filename)"
+            (keydown.space)="select(plan.filename); $event.preventDefault()"
+          >
+            <div class="title">{{ plan.title }}</div>
+            <div class="meta">
+              <code class="filename">{{ plan.filename }}</code>
+              <span class="dot">·</span>
+              <span class="target">target: <code>{{ plan.target_app }}</code></span>
+              <span class="dot">·</span>
+              <code class="exp-id">{{ plan.experiment_id }}</code>
+            </div>
+          </li>
+        }
+      </ul>
+
+      <fieldset class="profile-row">
+        <legend>Strategy profile</legend>
+        <label>
+          <input type="radio" name="profile" value="static" [checked]="profile() === 'static'" (change)="profile.set('static')" />
+          <span><strong>static</strong> — no LLM, $0, deterministic. Default.</span>
+        </label>
+        <label>
+          <input type="radio" name="profile" value="hybrid" [checked]="profile() === 'hybrid'" (change)="profile.set('hybrid')" />
+          <span><strong>hybrid</strong> — Static + LLM. Falls back if the LLM fails.</span>
+        </label>
+        <label>
+          <input type="radio" name="profile" value="llm" [checked]="profile() === 'llm'" (change)="profile.set('llm')" />
+          <span><strong>llm</strong> — LLM everywhere. Burns credits.</span>
+        </label>
+      </fieldset>
+
+      @if (error()) {
+        <p class="action-banner error">{{ error() }}</p>
+      }
+
+      <div class="actions">
+        <a routerLink="/experiments" class="cancel">Cancel</a>
+        <button type="button" class="run-btn" [disabled]="submitting() || !selected()" (click)="run()">
+          @if (submitting()) {
+            Spawning…
+          } @else {
+            Run experiment
+          }
+        </button>
+      </div>
+    }
+  }
+</div>

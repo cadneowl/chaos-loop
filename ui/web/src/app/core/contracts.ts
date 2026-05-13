@@ -363,3 +363,23 @@ export interface FixesAggregates {
   by_file: Array<{ path: string; count: number }>;
   by_day: Array<{ date: string; count: number }>;
 }
+
+// =============================================================================
+// Control plane
+// =============================================================================
+
+export type RunProfile = 'static' | 'hybrid' | 'llm';
+
+export interface PlanFile {
+  filename: string;
+  experiment_id: string;
+  title: string;
+  target_app: string;
+}
+
+export interface RunResponse {
+  experiment_id: string;
+  title: string;
+  target_app: string;
+  profile: RunProfile;
+}

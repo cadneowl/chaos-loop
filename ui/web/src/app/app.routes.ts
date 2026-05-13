@@ -29,6 +29,12 @@ export const routes: Routes = [
     title: 'Experiments · chaos',
   },
   {
+    path: 'run',
+    loadComponent: () =>
+      import('./features/run/run.component').then((m) => m.RunComponent),
+    title: 'Run experiment · chaos',
+  },
+  {
     path: 'experiments/:id',
     loadComponent: () =>
       import('./features/experiments/experiment-detail/experiment-detail.component').then(

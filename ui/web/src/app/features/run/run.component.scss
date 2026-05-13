@@ -1,0 +1,127 @@
+:host { display: block; padding: 2rem; }
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #0f172a;
+}
+
+.page > header { margin-bottom: 1.5rem; }
+.page > header h2 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+.subtitle {
+  margin: 0.5rem 0 0 0; color: #64748b; font-size: 0.9rem;
+  line-height: 1.5;
+}
+.subtitle code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  background: #f1f5f9;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}
+
+.empty {
+  padding: 2rem; text-align: center; color: #64748b;
+  background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+}
+.empty.error { color: #b91c1c; }
+
+.plans {
+  list-style: none; padding: 0; margin: 0 0 1.5rem 0;
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+
+.plans li {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+
+.plans li:hover { border-color: #cbd5e1; background: #f8fafc; }
+.plans li:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.plans li.selected {
+  border-color: #f59e0b;
+  background: #fef3c7;
+}
+
+.plans .title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.25rem; }
+.plans .meta {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.75rem; color: #64748b;
+}
+.plans .meta code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+.plans .meta .filename { color: #0f172a; }
+.plans .meta .exp-id { color: #94a3b8; }
+.plans .meta .dot { color: #cbd5e1; }
+
+.profile-row {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: white;
+}
+
+.profile-row legend {
+  padding: 0 0.5rem;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  color: #64748b;
+  text-transform: lowercase;
+}
+
+.profile-row label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.profile-row strong {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  color: #0f172a;
+}
+
+.actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 1rem;
+}
+
+.cancel { color: #64748b; text-decoration: none; font-size: 0.9rem; }
+.cancel:hover { text-decoration: underline; }
+
+.run-btn {
+  background: #f59e0b;
+  color: #0f172a;
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms;
+}
+
+.run-btn:hover:not(:disabled) { background: #d97706; }
+.run-btn:disabled {
+  background: #cbd5e1;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.action-banner {
+  margin: 0 0 1rem 0; padding: 0.5rem 0.75rem;
+  background: #fef2f2; border-left: 3px solid #b91c1c;
+  font-size: 0.85rem; color: #991b1b;
+}

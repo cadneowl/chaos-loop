@@ -12,9 +12,34 @@
     <p class="empty error">Experiment not found.</p>
   } @else {
     <header>
-      <h2>{{ record.value()!.plan.title }}</h2>
-      <code class="experiment-id">{{ record.value()!.experiment_id }}</code>
+      <div class="title-row">
+        <h2>{{ record.value()!.plan.title }}</h2>
+        <code class="experiment-id">{{ record.value()!.experiment_id }}</code>
+      </div>
+      @if (isLive()) {
+        <div class="actions" role="toolbar" aria-label="Experiment control actions">
+          @if (isPaused()) {
+            <button mat-stroked-button color="primary" (click)="resume()" [disabled]="actionPending()">
+              <span class="glyph" aria-hidden="true">▶</span> Resume
+            </button>
+          } @else {
+            <button mat-stroked-button color="primary" (click)="pause()" [disabled]="actionPending()">
+              <span class="glyph" aria-hidden="true">⏸</span> Pause
+            </button>
+          }
+          <button mat-stroked-button color="warn" (click)="abort()" [disabled]="actionPending()">
+            <span class="glyph" aria-hidden="true">⏹</span> Abort
+          </button>
+        </div>
+      }
     </header>
+
+    @if (actionMessage()) {
+      <p class="action-banner">{{ actionMessage() }}</p>
+    }
+    @if (actionError()) {
+      <p class="action-banner error">{{ actionError() }}</p>
+    }
 
     <mat-tab-group [animationDuration]="'0ms'" preserveContent>
       <mat-tab label="Overview">
