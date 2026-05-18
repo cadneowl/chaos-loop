@@ -15,7 +15,7 @@ dependencies = [
     "pydantic-settings>=2.14.1",
     # Orchestration
     "structlog>=24.1",
-    "rich>=13.7",
+    "rich>=15.0.0",
     "typer>=0.25.1",
     # Kubernetes (sync client; we wrap in asyncio.to_thread)
     "kubernetes>=29.0",
