@@ -1,0 +1,34 @@
+# Example: an experiment driven by the `example-keyvalue` plugin.
+#
+# The plugin owns the env/test lifecycle — it provisions an in-memory KV store,
+# seeds it, drives a workload during fault injection, guards an invariant, and
+# runs custom validation — while the orchestrator owns the state machine,
+# safety gates, and the fault itself.
+#
+# Run it:
+#   chaos run experiments/examples/04-plugin-keyvalue.yaml --dry-run --plugin example-keyvalue
+#
+# Flip `inject_data_loss: true` to watch the plugin's custom verify mark the
+# run regressed with structured failure details.
+title: "KV store survives network loss"
+target_app: keyvalue-demo
+plugin: example-keyvalue
+plugin_config:
+  seed_keys: [user:1, user:2, session:abc]
+  inject_data_loss: false
+  guard_min_keys: 0
+faults:
+  - category: network
+    name: network.loss
+    target_selector:
+      app: keyvalue-demo
+    parameters:
+      loss: "50"
+    duration_seconds: 5
+    rationale: "Verify the KV store keeps seeded keys under 50% packet loss."
+safety:
+  cluster_context: kind-chaos-dev
+  namespace: chaos-demo
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  require_namespace_annotation: false

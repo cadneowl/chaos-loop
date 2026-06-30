@@ -50,10 +50,10 @@ jobs:
         run: ruff check .
 
       - name: mypy strict
-        run: mypy agents/ shared/ orchestrator/
+        run: mypy agents/ shared/ orchestrator/ plugins/
 
       - name: pytest
-        run: pytest tests/ -q --cov=agents --cov=shared --cov=orchestrator --cov-report=term
+        run: pytest tests/ -q --cov=agents --cov=shared --cov=orchestrator --cov=plugins --cov-report=term
 
       # Smoke-test the CLI surface so a broken typer wiring trips CI rather
       # than the user. Cheap, no external deps.

@@ -103,6 +103,15 @@ def run(
             "docs/NEOOWL_ADAPTATION.md."
         ),
     ),
+    plugin: str | None = typer.Option(
+        None,
+        "--plugin",
+        help=(
+            "Experiment plugin owning the env/test lifecycle (provision, seed, "
+            "setup, custom verify, teardown). Overrides plan.plugin. "
+            "See `chaos plugins list`."
+        ),
+    ),
 ) -> None:
     """Execute one experiment from YAML.
 
@@ -182,7 +191,21 @@ def run(
         except AgentConfigError as e:
             raise typer.BadParameter(str(e)) from e
 
-    runner = ExperimentRunner(agents=agents, store=store, harness=harness)
+    # Resolve the plugin (CLI flag overrides plan.plugin). A null plugin leaves
+    # the run unchanged from its pre-plugin behavior.
+    plugin_name = plugin or plan.plugin
+    plugin_obj = None
+    if plugin_name:
+        from plugins.registry import PluginError, load_plugin
+
+        try:
+            plugin_obj = load_plugin(plugin_name)
+        except PluginError as e:
+            raise typer.BadParameter(str(e)) from e
+
+    runner = ExperimentRunner(
+        agents=agents, store=store, harness=harness, plugin=plugin_obj
+    )
     record = asyncio.run(runner.run(plan))
     console.print_json(json.dumps(record.model_dump(mode="json")))
 
@@ -534,6 +557,36 @@ def suppress_add_cmd(
     console.print(f"  summary    : {h.summary}")
     console.print(f"  fix_class  : {h.suggested_fix_class}")
     console.print(f"  written to : {suppress_path}")
+
+
+plugins_app = typer.Typer(
+    help="Inspect experiment plugins (env/test lifecycle hooks).",
+    no_args_is_help=True,
+)
+app.add_typer(plugins_app, name="plugins")
+
+
+@plugins_app.command("list")
+def plugins_list_cmd() -> None:
+    """List discovered experiment plugins (entry points + local dir)."""
+    from plugins.base import _HOOK_NAMES, class_overrides
+    from plugins.registry import PLUGINS, discover_plugins
+
+    discover_plugins()
+    if not PLUGINS:
+        console.print(
+            "[yellow]no plugins discovered. Register via the 'chaos.plugins' "
+            "entry-point group or drop a module in $CHAOS_PLUGINS_DIR "
+            "(default ./chaos_plugins).[/yellow]"
+        )
+        return
+    table = Table("name", "class", "hooks implemented")
+    for name in sorted(PLUGINS):
+        cls = PLUGINS[name]
+        # Class-level introspection — never construct the plugin just to list it.
+        hooks = [h for h in _HOOK_NAMES if class_overrides(cls, h)]
+        table.add_row(name, cls.__name__, ", ".join(hooks) or "[dim]none[/dim]")
+    console.print(table)
 
 
 catalogue_app = typer.Typer(

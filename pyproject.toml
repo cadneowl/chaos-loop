@@ -39,6 +39,12 @@ dev = [
 [project.scripts]
 chaos = "orchestrator.main:app"
 
+# Experiment plugins are discovered from this entry-point group (plus the local
+# $CHAOS_PLUGINS_DIR). Customers add their own scenario here from their package.
+[project.entry-points."chaos.plugins"]
+example-keyvalue = "plugins.examples.keyvalue_scenario:KeyValueScenario"
+example-web-service = "plugins.examples.web_service_scenario:WebServiceScenario"
+
 [tool.ruff]
 line-length = 110
 target-version = "py311"
@@ -95,4 +101,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["shared", "orchestrator", "agents"]
+packages = ["shared", "orchestrator", "agents", "plugins"]

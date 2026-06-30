@@ -527,6 +527,23 @@ chaos list-faults --category network
 chaos list-faults --requires-approval   # which faults need explicit approval
 ```
 
+### Experiment plugins (custom env / test lifecycle)
+
+When a run needs app-specific setup — provision an environment, prefill data,
+arrange a test, run **custom validation**, then guaranteed teardown — write an
+experiment plugin instead of stretching the generic agents. The orchestrator
+keeps owning the state machine, safety gates, and the fault; the plugin owns the
+scaffolding around it.
+
+```bash
+chaos plugins list                      # discovered plugins + which hooks each implements
+chaos run plan.yaml --plugin my-app     # --plugin overrides plan.plugin
+chaos run experiments/examples/04-plugin-keyvalue.yaml --dry-run --plugin example-keyvalue
+```
+
+Full lifecycle, the hook contract, discovery (entry points + local dir), and a
+worked example: [docs/PLUGINS.md](docs/PLUGINS.md).
+
 ### Verify cluster + Chaos Mesh integration
 
 ```bash
