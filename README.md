@@ -661,7 +661,7 @@ chaos/
 - [docs/SUPPRESSION.md](docs/SUPPRESSION.md) — muting findings the loop is allowed to keep producing but you've decided not to act on
 - [docs/SECURITY_CHAOS.md](docs/SECURITY_CHAOS.md) — Security Chaos Engineering integration
 - [docs/COMPARISON.md](docs/COMPARISON.md) — prior-art landscape (ChaosEater, Harness, Litmus, etc.)
-- [docs/ROADMAP.md](docs/ROADMAP.md) — milestones + remaining work
+- [docs/PLUGINS.md](docs/PLUGINS.md) — experiment plugins: customer-owned env/test lifecycle hooks
 - Per-agent READMEs: [tester](agents/tester/README.md) · [chaos](agents/chaos/README.md) · [security](agents/security/README.md) · [diagnostician](agents/diagnostician/README.md) · [fixer](agents/fixer/README.md)
 - [ui/README.md](ui/README.md) — read-only diagnostic UI on top of the SQLite store, with screenshots of every tab and the live-cluster wiring guide
 
