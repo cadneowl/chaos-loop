@@ -114,8 +114,8 @@ class FaultCategory(StrEnum):
     NETPOL = "netpol"
     EGRESS = "egress"
     RUNTIME = "runtime"
-    # Hardware-flavored — see docs/NEOOWL_ADAPTATION.md.
-    # Not Kubernetes; HardwareIO + HardwareChaosAgent dispatch these.
+    # Hardware-flavored — not Kubernetes; HardwareIO + HardwareChaosAgent
+    # dispatch these.
     RF = "rf"
     POWER = "power"
     SENSOR = "sensor"

@@ -8,9 +8,7 @@ This sketch is intentionally minimal — its job is to be the bench-side
 counterpart to `HilHardwareIO`'s serial protocol, not a production
 appliance. The serious version migrates to
 [`neoowl-defense`](https://github.com/cadneowl/neoowl-defense) once
-neoowl's RF-emission certification scope is settled (see
-[`docs/NEOOWL_ADAPTATION.md`](../../docs/NEOOWL_ADAPTATION.md), open
-question #3).
+neoowl's RF-emission certification scope is settled.
 
 ## Hardware
 

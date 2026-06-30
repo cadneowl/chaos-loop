@@ -10,8 +10,6 @@ bottom half.
 Phase 1: this is wired to RF renderers only (`agents/chaos/faults/rf.py`).
 Phase 3 will add power.* / sensor.* / time.* renderers and either
 extend this agent or add sibling agents per category.
-
-See docs/NEOOWL_ADAPTATION.md for the broader plan.
 """
 
 from __future__ import annotations

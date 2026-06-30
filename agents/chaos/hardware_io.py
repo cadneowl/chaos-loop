@@ -19,8 +19,6 @@ What lives behind this Protocol depends on the fault category:
 For Phase 1 we ship a single fault (`rf.wifi.deauth`) and a single
 implementation (`SimulatedHardwareIO`) — enough to validate the wiring
 end to end without a real ESP32 plugged in.
-
-See docs/NEOOWL_ADAPTATION.md for the full plan.
 """
 
 from __future__ import annotations

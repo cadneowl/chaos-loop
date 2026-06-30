@@ -60,4 +60,4 @@ A snapshot of what we agreed to build vs what's actually on disk as of milestone
 
 ## Where we go next
 
-See `docs/ROADMAP.md` for milestones. The agent READMEs (added in this commit alongside scripts/) each contain a milestone-by-milestone plan keyed to the same numbering.
+The agent READMEs (added in this commit alongside scripts/) each contain a milestone-by-milestone plan keyed to the same numbering.

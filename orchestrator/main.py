@@ -99,8 +99,7 @@ def run(
             "Target a hardware bench instead of Kubernetes. Wires "
             "HardwareChaosAgent + HardwareTelemetryBackend against an "
             "in-process simulator (Phase 1) or a real bench via "
-            "HilHardwareIO (Phase 2; not wired here yet). See "
-            "docs/NEOOWL_ADAPTATION.md."
+            "HilHardwareIO (Phase 2; not wired here yet)."
         ),
     ),
     plugin: str | None = typer.Option(

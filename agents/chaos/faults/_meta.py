@@ -26,7 +26,7 @@ class FaultDef:
 CATALOGUE: dict[str, FaultDef] = {
     # ---- hardware (HardwareChaosAgent path; chaos_mesh_kind is None because
     # the fault is enacted by an attack device over serial/MQTT, not via the
-    # Kubernetes API). See docs/NEOOWL_ADAPTATION.md.
+    # Kubernetes API).
     "wifi.deauth": FaultDef(
         name="wifi.deauth",
         category=FaultCategory.RF,
@@ -74,8 +74,7 @@ CATALOGUE: dict[str, FaultDef] = {
         chaos_mesh_kind=None,
     ),
     # ---- power.* (HardwareChaosAgent path; programmable bench PSU drives the
-    # DUT's supply rail). Phase 3 of the NeoOwl adaptation. See
-    # docs/NEOOWL_ADAPTATION.md.
+    # DUT's supply rail). Phase 3 of the NeoOwl adaptation.
     "power.brownout": FaultDef(
         name="power.brownout",
         category=FaultCategory.POWER,

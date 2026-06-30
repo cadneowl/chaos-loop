@@ -16,8 +16,6 @@ The gates are evaluated by `HardwareChaosAgent` pre-flight; a failure
 short-circuits to a failed `ChaosTimeline` with a descriptive error,
 which the orchestrator's `_abort` then handles the same way it handles
 any other gate.
-
-See docs/NEOOWL_ADAPTATION.md.
 """
 
 from __future__ import annotations
