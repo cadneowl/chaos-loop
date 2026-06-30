@@ -1,0 +1,43 @@
+# Example: a web service deployment under chaos, driven by a plugin.
+#
+# The `example-web-service` plugin provisions a (faked) Deployment, waits for it
+# to become ready, seeds fixture records, drives a request burst during the
+# fault, guards the error budget, and enforces an SLO in verify — then deletes
+# the deployment (guaranteed) on the way out.
+#
+# Healthy run (SLOs hold):
+#   chaos run experiments/examples/05-plugin-web-service.yaml --dry-run \
+#     --plugin example-web-service
+#
+# Flip `simulate_degradation: true` to watch verify fail the run with structured
+# SLO breaches, and set `guard_max_error_rate` to abort mid-run on error-budget
+# burn.
+title: "web-service holds its SLO under pod kill"
+target_app: web-service
+plugin: example-web-service
+plugin_config:
+  image: web-service:1.4.2
+  replicas: 3
+  seed_records:
+    user:1: alice
+    user:2: bob
+  slo_p95_ms: 150
+  slo_error_rate: 0.01
+  simulate_degradation: false
+  guard_max_error_rate: 0.0   # 0 disables the guard; try 0.2 with degradation on
+  request_burst: 20
+faults:
+  - category: pod
+    name: pod.kill
+    target_selector:
+      app: web-service
+    parameters:
+      mode: one
+    duration_seconds: 10
+    rationale: "Verify the service keeps its latency + error SLO while a pod is killed."
+safety:
+  cluster_context: kind-chaos-dev
+  namespace: chaos-demo
+  max_pods_affected: 1
+  max_duration_seconds: 60
+  require_namespace_annotation: false

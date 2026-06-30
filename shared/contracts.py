@@ -191,6 +191,18 @@ class ExperimentPlan(BaseModel):
         default_factory=list,
         description="Inline suppression rules. Combined with .chaos/suppress.yaml at the repo root.",
     )
+    plugin: str | None = Field(
+        default=None,
+        description=(
+            "Name of an experiment plugin (see plugins/registry.py) that owns the "
+            "env/test lifecycle: provision, seed, setup, custom verify, teardown. "
+            "Resolved at run time from entry points + the local plugins dir."
+        ),
+    )
+    plugin_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Opaque config handed to the plugin's hooks via PluginContext.config.",
+    )
 
     @field_validator("faults")
     @classmethod
@@ -508,6 +520,83 @@ class FixProposal(BaseModel):
         return v
 
 
+# ---------- plugin lifecycle ---------------------------------------------------
+
+
+class LifecycleStage(StrEnum):
+    """The ordered hooks an ExperimentPlugin may implement.
+
+    The plugin host (plugins/host.py) walks these in order. ENV-scoped stages
+    run once and wrap the TEST-scoped stages; teardown stages are guaranteed to
+    run in reverse on any exit path (success, assertion failure, crash, abort).
+    """
+
+    VALIDATE = "validate"
+    PROVISION_ENV = "provision_env"
+    AWAIT_READY = "await_ready"
+    SEED = "seed"
+    SETUP_TEST = "setup_test"
+    CAPTURE_BASELINE = "capture_baseline"
+    RUN_TEST = "run_test"
+    VERIFY = "verify"
+    COLLECT_DIAGNOSTICS = "collect_diagnostics"
+    TEARDOWN_TEST = "teardown_test"
+    TEARDOWN_ENV = "teardown_env"
+
+
+class StageStatus(StrEnum):
+    OK = "ok"
+    FAILED = "failed"
+    SKIPPED = "skipped"  # plugin didn't override the hook (default no-op)
+
+
+class StageResult(BaseModel):
+    """Audit record of one lifecycle hook invocation. Persisted on ExperimentRecord."""
+
+    stage: LifecycleStage
+    status: StageStatus
+    detail: str = ""
+    error: str | None = None
+    duration_ms: float | None = None
+    started_at: datetime = Field(default_factory=_now)
+    finished_at: datetime | None = None
+
+
+class VerifyFailure(BaseModel):
+    """One failed assertion from a plugin's custom verify.
+
+    Captures enough to diagnose without re-running: what was asserted, what was
+    expected vs. observed, and any structured evidence (log lines, metric values).
+    """
+
+    assertion: str = Field(min_length=1, description="Human-readable check that failed")
+    expected: str = ""
+    actual: str = ""
+    severity: FindingSeverity = FindingSeverity.MEDIUM
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class VerifyResult(BaseModel):
+    """Outcome of a plugin's custom validation.
+
+    Augments — does not replace — the built-in tester/security verify. The
+    orchestrator marks the run regressed if ``passed`` is False, and feeds
+    ``failures`` + ``evidence`` into the diagnosis.
+    """
+
+    passed: bool
+    summary: str = ""
+    failures: list[VerifyFailure] = Field(default_factory=list)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    metrics: list[StatisticalSample] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _failures_imply_not_passed(self) -> VerifyResult:
+        if self.passed and self.failures:
+            raise ValueError("VerifyResult.passed cannot be True while failures is non-empty")
+        return self
+
+
 # ---------- experiment record (persistence) -----------------------------------
 
 
@@ -587,3 +676,8 @@ class ExperimentRecord(BaseModel):
     finished_at: datetime | None = None
     spend_usd: float = 0.0
     agent_invocations: list[AgentInvocationLog] = Field(default_factory=list)
+    # Plugin lifecycle audit trail (empty when plan.plugin is None).
+    plugin_name: str | None = None
+    plugin_stage_results: list[StageResult] = Field(default_factory=list)
+    verify_result: VerifyResult | None = None
+    plugin_diagnostics: dict[str, Any] = Field(default_factory=dict)

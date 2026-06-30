@@ -21,6 +21,8 @@ from typing import Any, Protocol
 from orchestrator import safety, suppression
 from orchestrator.budget import BudgetTracker
 from orchestrator.store import ExperimentStore
+from plugins.base import ExperimentPlugin
+from plugins.host import GuardTripped, Session, open_session
 from shared.contracts import (
     AbortReason,
     ChaosTimeline,
@@ -88,16 +90,29 @@ class ExperimentRunner:
         store: ExperimentStore,
         *,
         harness: Any | None = None,  # agents._harness.Harness; typed loosely to avoid the import cycle
+        plugin: ExperimentPlugin | None = None,
         pause_poll_interval_s: float = 1.0,
     ) -> None:
         self.agents = agents
         self.store = store
         self.harness = harness
+        self.plugin = plugin
+        # The active plugin session, set for the duration of run(). None outside
+        # a run or when no plugin is configured.
+        self._session: Session | None = None
         # How often we re-check the control flags while paused. Exposed for
         # tests; production keeps the default 1s.
         self.pause_poll_interval_s = pause_poll_interval_s
 
     async def run(self, plan: ExperimentPlan) -> ExperimentRecord:
+        """Run one experiment.
+
+        The body runs inside a plugin session (a no-op when no plugin is
+        configured) so the plugin's env/test teardown hooks are guaranteed to
+        run on every exit path — success, abort, or crash. The cheap, plan-only
+        safety gates run *before* the session opens so an unsafe plan never
+        provisions an environment.
+        """
         record = ExperimentRecord(
             experiment_id=plan.experiment_id,
             plan=plan,
@@ -105,13 +120,49 @@ class ExperimentRunner:
         )
         self._attach_invocations(record)
         self.store.save(record)
-        budget = BudgetTracker(plan.budget)
 
-        # --- pre-flight safety gates ----------------------------------------
+        # --- pre-flight safety gates that need no environment ---------------
+        # Run before provisioning: reject an unsafe plan without standing up
+        # anything. The namespace-annotation gate moves *inside* the session
+        # since provisioning may be what creates/annotates the namespace.
         if fail := safety.check_cluster_allowed(plan.safety):
             return self._abort(record, fail.reason, fail.detail)
         if fail := safety.check_blast_radius(plan):
             return self._abort(record, fail.reason, fail.detail)
+
+        session = open_session(plan, self.plugin)
+        self._session = session
+        try:
+            async with session:
+                record = await self._run_body(plan, record, session)
+        except Exception as e:
+            # A plugin setup/teardown hook (or an unexpected agent error) raised.
+            # An exception can only escape _run_body before any terminal
+            # transition (the _abort/_finish paths return, never raise), so the
+            # record is non-terminal here. Teardown has already run via the
+            # session's unwind; record this as a graceful ABORTED rather than
+            # crashing the caller with a traceback.
+            record = self._abort(
+                record, AbortReason.AGENT_FAILURE, f"lifecycle failed: {e!r}"
+            )
+        finally:
+            # Re-sync after teardown so the persisted record carries the full
+            # plugin audit trail (including teardown stage results) and save it.
+            self._sync_plugin(record)
+            self.store.save(record)
+            self._session = None
+        return record
+
+    async def _run_body(
+        self, plan: ExperimentPlan, record: ExperimentRecord, session: Session
+    ) -> ExperimentRecord:
+        budget = BudgetTracker(plan.budget)
+
+        # Plugin setup (provision_env / seed / setup_test) has already run in
+        # session.__aenter__. Persist its stage results before going further.
+        self._sync_plugin(record)
+        self.store.save(record)
+
         if plan.safety.require_namespace_annotation:
             annotations = await self._fetch_namespace_annotations(plan.safety.namespace)
             if fail := safety.check_namespace_annotation(plan.safety, annotations):
@@ -140,12 +191,17 @@ class ExperimentRunner:
             )
         )
 
+        # Plugin's custom steady-state capture (informational; lands on
+        # ctx.baseline for the plugin's own verify to compare against).
+        await session.capture_baseline()
+
         if fail := safety.check_baseline_healthy(
             record.tester_baseline, record.security_baseline
         ):
             record.state = ExperimentState.BASELINE_FAIL
             return self._abort(record, fail.reason, fail.detail)
         record.state = ExperimentState.BASELINE_OK
+        self._sync_plugin(record)
         self.store.save(record)
 
         if fail := self._check_budget_step(budget, record):
@@ -157,8 +213,22 @@ class ExperimentRunner:
         record.state = ExperimentState.INJECT
         self.store.save(record)
 
+        # The plugin session drives the workload and polls its steady-state
+        # guard concurrently with injection. With no plugin (or a plugin that
+        # overrides neither), drive_run just awaits the injection.
         try:
-            record.chaos_timeline = await self.agents.chaos.execute(plan)
+            record.chaos_timeline = await session.drive_run(
+                lambda: self.agents.chaos.execute(plan)
+            )
+        except GuardTripped as e:
+            # The guard cancelled the injection mid-flight; the fault may still
+            # be live. Best-effort cleanup so a tripped guard never leaves an
+            # active fault behind, then gather evidence and abort.
+            record.state = ExperimentState.INJECT_FAILED
+            await self._best_effort_chaos_cleanup(plan)
+            record.plugin_diagnostics = await session.collect_diagnostics()
+            self._sync_plugin(record)
+            return self._abort(record, AbortReason.SLO_BREACH, str(e))
         except Exception as e:
             record.state = ExperimentState.INJECT_FAILED
             return self._abort(record, AbortReason.AGENT_FAILURE, f"chaos.execute raised: {e!r}")
@@ -197,15 +267,26 @@ class ExperimentRunner:
             )
         )
 
-        regressed = (
+        # Plugin's custom validation — augments the built-in verify. A failed
+        # VerifyResult marks the run regressed even when tester/security are
+        # green; its structured failures are persisted for the audit trail.
+        plugin_verify = await session.verify()
+        record.verify_result = plugin_verify
+        plugin_regressed = plugin_verify is not None and not plugin_verify.passed
+        builtin_regressed = (
             not record.tester_verify.steady_state
             or record.security_verify.has_critical_or_high
             or record.security_verify.sbom_drift_from_baseline
         )
+        regressed = builtin_regressed or plugin_regressed
 
         if not regressed:
             record.state = ExperimentState.STEADY
+            self._sync_plugin(record)
             return self._finish(record)
+
+        # Gather failure evidence before any teardown destroys it.
+        record.plugin_diagnostics = await session.collect_diagnostics()
 
         if fail := self._check_budget_step(budget, record):
             return self._abort(record, fail.reason, fail.detail)
@@ -214,7 +295,21 @@ class ExperimentRunner:
 
         # --- diagnose -------------------------------------------------------
         record.state = ExperimentState.REGRESSED
+        self._sync_plugin(record)
         self.store.save(record)
+
+        # The built-in diagnostician consumes a failed tester/security report.
+        # If the regression was detected *only* by the plugin's verify, there's
+        # no such report to hand it — and the plugin already produced structured
+        # failure details (verify_result + diagnostics). Record and finish
+        # rather than invoke the generic diagnostician with nothing to chew on.
+        if not builtin_regressed:
+            log.info(
+                "%s regression detected by plugin verify only; "
+                "skipping diagnostician (see verify_result)",
+                plan.experiment_id,
+            )
+            return self._finish(record)
         record.state = ExperimentState.DIAGNOSE
         self.store.save(record)  # persist before the long-running agent call
         record.diagnosis = await self.agents.diagnostician.diagnose(
@@ -370,6 +465,33 @@ class ExperimentRunner:
             for inv in self.harness.invocations
         ]
 
+    async def _best_effort_chaos_cleanup(self, plan: ExperimentPlan) -> None:
+        """Ask the chaos agent to delete any live faults for this plan. Never raises."""
+        cleanup = getattr(self.agents.chaos, "cleanup", None)
+        if cleanup is None:
+            return
+        try:
+            await cleanup(plan)
+        except Exception as e:  # cleanup is best-effort; never raise
+            log.warning("best-effort chaos cleanup failed for %s: %r", plan.experiment_id, e)
+
+    def _sync_plugin(self, record: ExperimentRecord) -> None:
+        """Copy the live plugin session's audit state onto the record.
+
+        Idempotent; called before each persistence point so the stored record
+        reflects plugin progress (stage results, verdict, diagnostics). No-op
+        when no plugin session is active.
+        """
+        session = self._session
+        if session is None:
+            return
+        record.plugin_name = session.plugin_name
+        record.plugin_stage_results = list(session.records)
+        if session.verify_result is not None:
+            record.verify_result = session.verify_result
+        if session.diagnostics:
+            record.plugin_diagnostics = session.diagnostics
+
     def _abort(
         self,
         record: ExperimentRecord,
@@ -383,6 +505,7 @@ class ExperimentRunner:
         record.finished_at = datetime.now(tz=UTC)
         self._attach_invocations(record)
         self._sync_spend(record)
+        self._sync_plugin(record)
         self.store.save(record)
         # Clear any operator signals after the terminal save so a record
         # never persists with `pause_requested=1` or `abort_requested=1`
@@ -395,6 +518,7 @@ class ExperimentRunner:
         record.finished_at = datetime.now(tz=UTC)
         self._attach_invocations(record)
         self._sync_spend(record)
+        self._sync_plugin(record)
         self.store.save(record)
         self.store.clear_control(record.experiment_id)
         return record
