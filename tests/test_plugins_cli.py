@@ -24,10 +24,12 @@ def test_run_unknown_plugin_errors() -> None:
     result = runner.invoke(
         app, ["run", str(plan), "--dry-run", "--plugin", "does-not-exist"]
     )
+    # typer.BadParameter -> click UsageError -> non-zero exit, and no record is
+    # emitted to stdout. (The "unknown plugin" message text — which lands on
+    # stdout or stderr depending on the click version — is asserted in
+    # test_plugins_registry.py::test_load_unknown_raises_with_hint.)
     assert result.exit_code != 0
-    assert "unknown plugin" in result.stdout.lower() or "unknown plugin" in str(
-        result.exception
-    )
+    assert not result.output.strip().startswith("{")
 
 
 def test_run_with_plugin_dry_run(tmp_path: Path) -> None:
