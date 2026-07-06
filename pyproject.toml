@@ -16,7 +16,7 @@ dependencies = [
     # Orchestration
     "structlog>=25.5.0",
     "rich>=15.0.0",
-    "typer>=0.25.1",
+    "typer>=0.26.8",
     # Kubernetes (sync client; we wrap in asyncio.to_thread)
     "kubernetes>=35.0.0",
     # HTTP client used by Loki + Prometheus backends
