@@ -25,3 +25,12 @@ chaos run experiments/examples/05-plugin-web-service.yaml --dry-run \
 
 Full guide — lifecycle, hook reference, discovery/packaging, testing, cookbook,
 FAQ — is in [`docs/PLUGINS.md`](../docs/PLUGINS.md).
+
+## Regression oracles are plugins too
+
+The resilience regression suites (`regression/`) are built on this exact
+contract: each oracle (`regression-playwright`, `regression-command`) is an
+`ExperimentPlugin` that uses `capture_baseline` to measure steady state before a
+fault and `verify` to report the *newly-failing* delta under it. They're
+discovered through the same `chaos.plugins` entry-point group, so they show up in
+`chaos plugins list`. See [`docs/REGRESSION.md`](../docs/REGRESSION.md).

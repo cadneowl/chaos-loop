@@ -19,9 +19,24 @@ chaos list                                            # recent
 chaos show exp-abc123def456                           # one record as JSON
 ```
 
+## Regression suites
+
+`examples/regression/` holds a different kind of file: a **regression suite**
+(`shared.contracts.RegressionSuite`, not `ExperimentPlan`). Where an experiment
+*discovers* a weakness, a suite *replays* a curated corpus to confirm it stays
+fixed, using the customer's own test suite as the oracle.
+
+```bash
+chaos regression coverage experiments/examples/regression/checkout.yaml --fault network.loss
+chaos regression run      experiments/examples/regression/checkout.yaml --dry-run
+```
+
+Full guide: [`docs/REGRESSION.md`](../docs/REGRESSION.md).
+
 ## Layout
 
 - `examples/` — curated reference experiments, committed
+- `examples/regression/` — reference regression suites (RegressionSuite schema)
 - `runs/` — output artifacts per experiment (gitignored)
 
 ## Authoring guidelines

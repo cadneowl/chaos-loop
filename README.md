@@ -16,18 +16,27 @@ band and the meta-harness who audits every musician.
 
 A multi-agent system that **closes the loop** on chaos engineering: it
 generates hypotheses by reading the target's source, injects faults via
-[Chaos Mesh](https://chaos-mesh.org/), verifies steady state with statistical
-baselines, diagnoses regressions with cited evidence, and opens a **draft
-PR** with the proposed fix + a regression test.
+[Chaos Mesh](https://chaos-mesh.org/) (or a hardware bench for RF / power /
+sensor faults), verifies steady state with statistical baselines, diagnoses
+regressions with cited evidence, and opens a **draft PR** with the proposed fix
++ a regression test.
 
 Inject-only tools like Chaos Mesh, Litmus, AWS FIS, and Gremlin stop after
 the fault. A human reads dashboards, files a Jira ticket, opens a PR weeks
 later. This system tries to do all of that — *or fail honestly when it
 can't*.
 
+And once a weakness is found and fixed, **resilience regression suites** keep
+it fixed: replay a curated corpus of scenarios — inheriting the customer's own
+Playwright or command test suite as the pass/fail oracle — and report an honest
+fault-by-journey coverage matrix. Discovery finds the weakness; regression
+proves it stays gone. See [**docs/REGRESSION.md**](docs/REGRESSION.md).
+
 <p align="center">
   <img src="docs/cast/diagram_cast.png" alt="The orchestrator delegating to five agents: tester, chaos, security, diagnostician, fixer — each labelled with its responsibilities" width="780" />
 </p>
+
+<p align="center"><sub>The <b>discovery loop</b>. Regression suites and experiment plugins reuse this same cast — no new agents, no new state.</sub></p>
 
 ---
 
@@ -65,8 +74,10 @@ can't*.
 | Security (Trivy + Syft + Grype + gitleaks + cosign + kubescape) | working — opt-in per scanner; SBOM drift detection live |
 | Diagnostician | working — Static + Hybrid + LLM strategies |
 | Fixer (proposal artifacts) | working; actual file edits + `gh pr create` is M6.x.b |
+| Resilience regression suites | working — inherit a Playwright / command suite, replay under fault, fault-by-journey coverage |
+| Experiment plugins | working — customer-owned env/test lifecycle with guaranteed teardown |
 | LLM backends | Anthropic Claude (default), Ollama (local), any LiteLLM provider |
-| Tests | 458 unit tests, 81%+ coverage, mypy strict, ruff clean |
+| Tests | 733 unit tests, 85%+ coverage, mypy strict, ruff clean |
 
 ---
 
@@ -114,6 +125,11 @@ several things differently.
    gates, blast-radius limits, and budget enforcement are code, not LLM
    judgment. The cognitive work is delegated to agents; the safety properties
    are not.
+7. **Discovery *and* regression, one engine.** The same loop runs two ways:
+   *discover* new weaknesses one fault at a time, or *confirm* a curated corpus
+   stays fixed. Regression suites inherit the customer's existing test suite as
+   the oracle and report honest, relevant coverage — no separate harness. See
+   [docs/REGRESSION.md](docs/REGRESSION.md).
 
 ---
 
@@ -344,7 +360,7 @@ Verify the install:
 
 ```bash
 chaos --help                          # the orchestrator's `chaos run` CLI
-python -m pytest tests/ -q            # should print "411 passed, 1 skipped"
+python -m pytest tests/ -q            # should print "733 passed, 1 skipped"
 ```
 
 ### 2. Spin up a kind cluster + install Chaos Mesh
@@ -544,6 +560,59 @@ chaos run experiments/examples/04-plugin-keyvalue.yaml --dry-run --plugin exampl
 Full lifecycle, the hook contract, discovery (entry points + local dir), and a
 worked example: [docs/PLUGINS.md](docs/PLUGINS.md).
 
+### Resilience regression suites
+
+The loop's other mode. Where a single experiment *discovers* a weakness, a
+**regression suite** *confirms* a curated corpus stays fixed — replaying frozen
+scenarios and asserting everything that used to hold still holds. Each scenario
+is an `ExperimentPlan` under the hood, so it runs through the same state machine
+and the same safety gates; the pass/fail **oracle** is the customer's own suite
+(a Playwright project, or any exit-code command).
+
+```mermaid
+flowchart TD
+    S["scaffold<br/>enumerate journeys"] --> V["validate<br/>lint fault names + journeys"]
+    V --> RUN["run suite"]
+    RUN --> EACH{"for each<br/>scenario"}
+    EACH --> BASE["capture_baseline<br/>customer suite, CLEAN"]
+    BASE --> INJ["inject the frozen fault"]
+    INJ --> VER["verify<br/>customer suite, UNDER FAULT"]
+    VER --> DELTA["newly-failing delta<br/>green-at-baseline then red-now"]
+    DELTA --> VERDICT{"verdict"}
+    VERDICT --> PASS["PASS"]
+    VERDICT --> REG["REGRESSED"]
+    VERDICT --> BF["BASELINE_FAIL"]
+    RUN --> COV["coverage matrix<br/>fault-by-journey: covered / gap"]
+```
+
+```bash
+# Bootstrap a suite from a Playwright project's journeys.
+chaos regression scaffold my-suite.yaml --suite-path ./e2e --target-app shop
+
+# Offline lint: bad fault names, journeys not in all_journeys. Runs nothing.
+chaos regression validate my-suite.yaml
+
+# Fault-by-journey coverage matrix — no runs needed.
+chaos regression coverage my-suite.yaml --fault network.loss
+
+# Replay every scenario; exits non-zero on any regression.
+#   --dry-run stubs the oracle to exercise wiring with no Node / target.
+chaos regression run my-suite.yaml --dry-run
+
+# Browse history, then drill in.
+chaos regression list
+chaos regression show <srun-id>
+```
+
+Design in one breath: the verdict is driven by the **customer's oracle** (not
+the built-in tester); the **newly-failing** delta (green-at-baseline →
+red-under-fault) is the regression signal; an all-red baseline reports
+`BASELINE_FAIL` rather than a misleading `PASS`; and coverage counts only the
+fault categories a suite actually uses, so the number stays honest. A worked
+suite lives at
+[`experiments/examples/regression/checkout.yaml`](experiments/examples/regression/checkout.yaml);
+the full guide is [docs/REGRESSION.md](docs/REGRESSION.md).
+
 ### Verify cluster + Chaos Mesh integration
 
 ```bash
@@ -597,10 +666,10 @@ chaos-mesh cluster: [**ui/README.md**](ui/README.md).
 
 ```bash
 $ python -m pytest tests/ -q
-458 passed, 1 skipped in 2.55s
+733 passed, 1 skipped
 
-$ python -m mypy agents/ shared/ orchestrator/
-Success: no issues found in 61 source files
+$ python -m mypy agents/ shared/ orchestrator/ plugins/ regression/
+Success: no issues found in 86 source files
 
 $ python -m ruff check .
 All checks passed!
@@ -618,7 +687,9 @@ Coverage by area (`pytest --cov`):
 | `agents/tester/detectors/*` | 89–100% |
 | `agents/diagnostician/diagnoser.py` | 78% |
 | `agents/fixer/strategy.py` | 79% |
-| **Project total** | **81%+** |
+| `plugins/*` | 96–100% (host, registry, base, examples) |
+| `regression/*` | 70–100% (parse/delta/coverage fully covered; oracles shell out) |
+| **Project total** | **85%+** |
 
 Live-cluster integration is verified by the four scripts in `scripts/`
 (not part of unit-test runs; they need a real cluster + Chaos Mesh).
@@ -643,8 +714,10 @@ chaos/
 │   ├── security/       Scanner runner + Trivy (more scanners in M4.1)
 │   ├── diagnostician/  RCA agent: Loki + Prom + code tools; Static/Hybrid/Claude Diagnoser
 │   └── fixer/          Draft-PR agent: decision tree + Static/Hybrid/Claude FixerStrategy
-├── experiments/        Plan YAMLs + run artifacts
-├── tests/              411 unit tests (mock-based; live cluster tested via scripts/)
+├── plugins/            Experiment lifecycle plugins (customer env/test hooks) + examples
+├── regression/         Resilience regression suites: oracles, coverage matrix, suite runner
+├── experiments/        Plan YAMLs + regression suites (examples/regression/) + run artifacts
+├── tests/              733 unit tests (mock-based; live cluster tested via scripts/)
 ├── scripts/            Live-cluster smoke tests + renderer validator
 ├── ui/                 Read-only diagnostic web UI: NestJS server + Angular SPA
 └── docs/               Deeper architecture / safety / modes / comparison / roadmap docs
@@ -662,6 +735,7 @@ chaos/
 - [docs/SECURITY_CHAOS.md](docs/SECURITY_CHAOS.md) — Security Chaos Engineering integration
 - [docs/COMPARISON.md](docs/COMPARISON.md) — prior-art landscape (ChaosEater, Harness, Litmus, etc.)
 - [docs/PLUGINS.md](docs/PLUGINS.md) — experiment plugins: customer-owned env/test lifecycle hooks
+- [docs/REGRESSION.md](docs/REGRESSION.md) — resilience regression suites: replay a corpus, oracle verdicts, coverage matrix
 - Per-agent READMEs: [tester](agents/tester/README.md) · [chaos](agents/chaos/README.md) · [security](agents/security/README.md) · [diagnostician](agents/diagnostician/README.md) · [fixer](agents/fixer/README.md)
 - [ui/README.md](ui/README.md) — read-only diagnostic UI on top of the SQLite store, with screenshots of every tab and the live-cluster wiring guide
 

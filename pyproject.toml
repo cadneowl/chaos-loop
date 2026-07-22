@@ -44,6 +44,9 @@ chaos = "orchestrator.main:app"
 [project.entry-points."chaos.plugins"]
 example-keyvalue = "plugins.examples.keyvalue_scenario:KeyValueScenario"
 example-web-service = "plugins.examples.web_service_scenario:WebServiceScenario"
+# Regression oracles — inherit a customer suite (Playwright) or any exit-code command.
+regression-playwright = "regression.oracles.playwright:PlaywrightOraclePlugin"
+regression-command = "regression.oracles.command:CommandOraclePlugin"
 
 [tool.ruff]
 line-length = 110
@@ -101,4 +104,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["shared", "orchestrator", "agents", "plugins"]
+packages = ["shared", "orchestrator", "agents", "plugins", "regression"]
