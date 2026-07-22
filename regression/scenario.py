@@ -35,6 +35,19 @@ def _stable_suite_id(name: str) -> str:
     return f"suite-{digest}"
 
 
+def _stable_scenario_id(suite_name: str, title: str) -> str:
+    """Deterministic scenario id from ``(suite name, title)``.
+
+    Goldens (chronic drift) are keyed by ``scenario_id``, so it MUST survive a
+    reload — a random id per load would orphan every golden and silently report
+    no drift. Derived from the title (not position), so reordering scenarios
+    keeps their identity. Title uniqueness is enforced by ``validate_suite`` so
+    two scenarios can't collide onto one id.
+    """
+    digest = hashlib.sha256(f"{suite_name}\0{title}".encode()).hexdigest()[:12]
+    return f"scn-{digest}"
+
+
 class SuiteValidationError(ValueError):
     """A suite that loaded but is internally inconsistent (bad fault / journey refs)."""
 
@@ -48,8 +61,15 @@ def validate_suite(suite: RegressionSuite) -> list[str]:
     """
     problems: list[str] = []
     all_journeys = set(suite.all_journeys)
+    seen_titles: set[str] = set()
     for scn in suite.scenarios:
         where = f"scenario {scn.title!r}"
+        if scn.title in seen_titles:
+            problems.append(
+                f"{where}: duplicate title — titles must be unique (they key the "
+                f"scenario's stable id and its golden drift baseline)."
+            )
+        seen_titles.add(scn.title)
         if scn.fault.name not in CATALOGUE:
             problems.append(
                 f"{where}: fault {scn.fault.name!r} is not in the catalogue "
@@ -76,6 +96,7 @@ def _expand(raw: dict[str, Any]) -> dict[str, Any]:
     default_oracle = data.pop("oracle", None)
     defaults: dict[str, Any] = data.pop("oracle_defaults", None) or {}
     scenarios: list[dict[str, Any]] = list(data.get("scenarios") or [])
+    suite_name = data.get("name")
 
     expanded: list[dict[str, Any]] = []
     for scn in scenarios:
@@ -85,6 +106,14 @@ def _expand(raw: dict[str, Any]) -> dict[str, Any]:
         oracle_config = {**defaults, **(merged.get("oracle_config") or {})}
         if oracle_config:
             merged["oracle_config"] = oracle_config
+        # Stable scenario identity so goldens survive a reload (see
+        # _stable_scenario_id). An explicit scenario_id in the file wins.
+        if (
+            "scenario_id" not in merged
+            and isinstance(suite_name, str)
+            and isinstance(merged.get("title"), str)
+        ):
+            merged["scenario_id"] = _stable_scenario_id(suite_name, merged["title"])
         expanded.append(merged)
 
     data["scenarios"] = expanded

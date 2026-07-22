@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Protocol
 from plugins.base import ExperimentPlugin
 from regression.coverage import CoverageReporter
 from regression.oracles.command import CommandOraclePlugin
+from regression.oracles.metric import MetricOraclePlugin
 from regression.oracles.playwright import PlaywrightOraclePlugin
 from shared.contracts import (
     AbortReason,
@@ -37,10 +38,11 @@ if TYPE_CHECKING:
     from orchestrator.loop import Agents
     from orchestrator.store import ExperimentStore
 
-# Oracle kind -> plugin class. METRIC (v2) / NEGATIVE (v3) are intentionally absent.
+# Oracle kind -> plugin class. NEGATIVE (v3) is intentionally absent.
 _ORACLE_PLUGINS: dict[OracleKind, type[ExperimentPlugin]] = {
     OracleKind.PLAYWRIGHT: PlaywrightOraclePlugin,
     OracleKind.COMMAND: CommandOraclePlugin,
+    OracleKind.METRIC: MetricOraclePlugin,
 }
 
 

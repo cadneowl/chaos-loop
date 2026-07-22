@@ -96,6 +96,38 @@ def test_suite_id_is_stable_from_name(tmp_path: Path) -> None:
     assert first.suite_id.startswith("suite-")
 
 
+def test_scenario_ids_are_stable_across_loads(tmp_path: Path) -> None:
+    # Goldens (chronic drift) are keyed by scenario_id — a random id per load
+    # would orphan every golden and silently report no drift. Same file, two
+    # loads -> identical, title-derived ids.
+    first = load_suite(_write(tmp_path, _SUITE_YAML))
+    second = load_suite(_write(tmp_path, _SUITE_YAML))
+    assert [s.scenario_id for s in first.scenarios] == [
+        s.scenario_id for s in second.scenarios
+    ]
+    assert all(s.scenario_id.startswith("scn-") for s in first.scenarios)
+    # Distinct titles -> distinct ids (no collision).
+    assert len({s.scenario_id for s in first.scenarios}) == len(first.scenarios)
+
+
+def test_duplicate_scenario_titles_rejected(tmp_path: Path) -> None:
+    y = (
+        "name: s\ntarget_app: shop\n"
+        "safety: {cluster_context: kind-test, namespace: shop}\n"
+        'all_journeys: ["a.spec:x"]\n'
+        "scenarios:\n"
+        + "".join(
+            "  - title: same\n"
+            "    fault: {category: pod, name: pod.kill, "
+            "target_selector: {app: web}, duration_seconds: 10, rationale: r}\n"
+            '    journeys: ["a.spec:x"]\n'
+            for _ in range(2)
+        )
+    )
+    with pytest.raises(SuiteValidationError, match="duplicate title"):
+        load_suite(_write(tmp_path, y))
+
+
 def test_pinned_suite_id_is_respected(tmp_path: Path) -> None:
     y = (
         "suite_id: suite-abcabcabcabc\nname: x\ntarget_app: app\n"

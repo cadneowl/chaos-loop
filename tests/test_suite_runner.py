@@ -197,8 +197,9 @@ def test_oracle_verdict_overrides_builtin_tester() -> None:
 
 def test_unimplemented_oracle_raises(tmp_path: Path) -> None:
     store = ExperimentStore(tmp_path / "db.sqlite")
+    # NEGATIVE (must-not-happen assertions) is the remaining unimplemented kind.
     scenario = RegressionScenario(
-        title="metric", fault=_fault("pod.kill"), oracle=OracleKind.METRIC
+        title="negative", fault=_fault("pod.kill"), oracle=OracleKind.NEGATIVE
     )
     runner = SuiteRunner(store, _factory_over([]))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not implemented in v1"):

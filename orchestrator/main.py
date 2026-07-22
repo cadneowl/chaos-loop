@@ -876,6 +876,8 @@ def regression_run_cmd(
     )
     suite_runner = SuiteRunner.with_agents(agents, store, harness=harness)
     overrides: dict[str, object] = {"_dry_run": True} if dry_run else {}
+    if prom_url:  # the metric oracle samples distributions from Prometheus
+        overrides["prom_url"] = prom_url
 
     from shared.contracts import RegressionOutcome, RegressionVerdict
 
@@ -944,15 +946,21 @@ def _print_drift(report: DriftReport) -> None:
             detail = "[dim]did not assess cleanly this run — drift not comparable[/dim]"
         elif s.missing_golden:
             detail = "[dim]no golden[/dim]"
-        elif not s.regressed and not s.recovered:
-            detail = "[dim]stable[/dim]"
         else:
             parts = []
             if s.regressed:
                 parts.append("[red]regressed at baseline: " + ", ".join(s.regressed) + "[/red]")
+            for m in s.metric_drifts:
+                if m.regressed:
+                    parts.append(
+                        f"[red]{m.metric} {m.percentile} {m.golden_value:.3g}"
+                        f"->{m.current_value:.3g} (>{m.max_ratio:.2g}x)[/red]"
+                    )
+                elif m.missing:
+                    parts.append(f"[yellow]{m.metric}: not sampled[/yellow]")
             if s.recovered:
                 parts.append("[green]recovered: " + ", ".join(s.recovered) + "[/green]")
-            detail = "  ".join(parts)
+            detail = "  ".join(parts) if parts else "[dim]stable[/dim]"
         table.add_row(s.title or s.scenario_id, detail)
     console.print(table)
     console.print(

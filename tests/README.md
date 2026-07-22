@@ -23,9 +23,10 @@ pytest tests/
 - `test_regression_scenario.py` — suite YAML load/dump, `oracle_defaults` merge, validation (bad fault / journey refs), stable `suite_id`
 - `test_playwright_oracle.py` — Playwright JSON parse + newly-failing delta, `--grep` derivation, dry-run stub, unassessable baseline
 - `test_command_oracle.py` — exit-code oracle delta
+- `test_metric_oracle.py` — metric distribution sampling + under-fault percentile-budget verdict (higher/lower-worse, unassessable, dry-run)
 - `test_suite_runner.py` — outcome classification (PASS/REGRESSED/BASELINE_FAIL/ERROR), persistence, oracle-authoritative verdict, progress callback
 - `test_regression_coverage.py` — coverage matrix (covered/gap/unknown), category-scoped axis, `n/a` comprehensiveness
 - `test_regression_relevance.py` — footprint sources (declarative + trace) and evidence-backed `n-a` classification
-- `test_regression_drift.py` — chronic drift: baseline_passing extraction, golden diff, golden storage round-trip
+- `test_regression_drift.py` — chronic drift: baseline extraction, boolean + metric-distribution golden diff, trustworthiness filter, golden storage round-trip
 
 These run without a cluster or LLM. Live-cluster integration is exercised by the scripts in `scripts/`, not here.
