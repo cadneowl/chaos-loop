@@ -28,6 +28,7 @@ from shared.contracts import (
     ExperimentId,
     ExperimentRecord,
     ExperimentState,
+    Golden,
     SuiteRunId,
     SuiteRunRecord,
 )
@@ -61,6 +62,17 @@ CREATE TABLE IF NOT EXISTS suite_runs (
 
 CREATE INDEX IF NOT EXISTS idx_suite_id ON suite_runs(suite_id);
 CREATE INDEX IF NOT EXISTS idx_suite_started_at ON suite_runs(started_at);
+
+CREATE TABLE IF NOT EXISTS goldens (
+    suite_id TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    blob TEXT NOT NULL,
+    PRIMARY KEY (suite_id, target_ref, scenario_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goldens_suite ON goldens(suite_id);
 """
 
 # Idempotent column adds. Each entry is (column-name, ALTER statement).
@@ -213,6 +225,48 @@ class ExperimentStore:
                 (limit,),
             ).fetchall()
         return [SuiteRunRecord.model_validate(json.loads(r[0])) for r in rows]
+
+    # -- goldens (chronic drift baselines) -------------------------------------
+
+    def save_goldens(
+        self, suite_id: str, target_ref: str, goldens: dict[str, Golden]
+    ) -> None:
+        """Store one golden per scenario for ``(suite_id, target_ref)``. Upserts."""
+        with self._conn() as c:
+            for scenario_id, golden in goldens.items():
+                c.execute(
+                    "INSERT INTO goldens "
+                    "(suite_id, target_ref, scenario_id, captured_at, blob) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(suite_id, target_ref, scenario_id) DO UPDATE SET "
+                    "  captured_at=excluded.captured_at, blob=excluded.blob",
+                    (
+                        suite_id,
+                        target_ref,
+                        scenario_id,
+                        golden.captured_at.isoformat(),
+                        golden.model_dump_json(),
+                    ),
+                )
+
+    def load_goldens(self, suite_id: str, target_ref: str) -> dict[str, Golden]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT scenario_id, blob FROM goldens "
+                "WHERE suite_id = ? AND target_ref = ?",
+                (suite_id, target_ref),
+            ).fetchall()
+        return {sid: Golden.model_validate(json.loads(blob)) for sid, blob in rows}
+
+    def golden_refs(self, suite_id: str) -> list[tuple[str, int, str]]:
+        """``(target_ref, scenario_count, latest_captured_at)`` per stored ref."""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT target_ref, COUNT(*), MAX(captured_at) FROM goldens "
+                "WHERE suite_id = ? GROUP BY target_ref ORDER BY MAX(captured_at) DESC",
+                (suite_id,),
+            ).fetchall()
+        return [(ref, int(count), captured) for ref, count, captured in rows]
 
     # -- control plane ---------------------------------------------------------
 

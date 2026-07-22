@@ -606,10 +606,11 @@ chaos regression show <srun-id>
 
 Design in one breath: the verdict is driven by the **customer's oracle** (not
 the built-in tester); the **newly-failing** delta (green-at-baseline →
-red-under-fault) is the regression signal; an all-red baseline reports
-`BASELINE_FAIL` rather than a misleading `PASS`; and coverage counts only the
-fault categories a suite actually uses, so the number stays honest. A worked
-suite lives at
+red-under-fault) is the *acute* signal, while a **golden baseline** catches
+*chronic* drift (a journey that quietly went red between releases); an all-red
+baseline reports `BASELINE_FAIL` rather than a misleading `PASS`; and coverage
+counts only relevant cells — with journey **footprints** promoting phantom gaps
+to evidence-backed `n/a` — so the number stays honest. A worked suite lives at
 [`experiments/examples/regression/checkout.yaml`](experiments/examples/regression/checkout.yaml);
 the full guide is [docs/REGRESSION.md](docs/REGRESSION.md).
 

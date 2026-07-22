@@ -131,6 +131,8 @@ async def test_newly_failing_is_regression() -> None:
     assert result.passed is False
     assert result.evidence["newly_failing"] == ["a.spec:y"]
     assert [f.assertion for f in result.failures] == ["a.spec:y"]
+    # baseline_passing is recorded on every branch (drift/golden capture).
+    assert result.evidence["baseline_passing"] == ["a.spec:x", "a.spec:y"]
 
 
 async def test_all_asserted_red_at_baseline_is_unassessable() -> None:

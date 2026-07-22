@@ -44,6 +44,8 @@ class CommandOraclePlugin(ExperimentPlugin):
         code = await self._exec(ctx.config)
         journey = self._journey(ctx)
         baseline_ok = bool(ctx.scratch.get("baseline_ok", False))
+        # The single "journey" (the command) passes at baseline iff exit 0 then.
+        baseline_passing = [journey] if baseline_ok else []
         newly_failing = baseline_ok and code != 0
         if not newly_failing:
             if not baseline_ok:
@@ -52,12 +54,16 @@ class CommandOraclePlugin(ExperimentPlugin):
                     passed=True,
                     summary=f"{journey} already failing at baseline "
                     f"(exit {ctx.scratch.get('baseline_code')}); cannot assess resilience",
-                    evidence={"newly_failing": [], "baseline_unassessable": True},
+                    evidence={
+                        "newly_failing": [],
+                        "baseline_unassessable": True,
+                        "baseline_passing": baseline_passing,
+                    },
                 )
             return VerifyResult(
                 passed=True,
                 summary=f"{journey} exit={code} under fault",
-                evidence={"newly_failing": [], "baseline_ok": baseline_ok},
+                evidence={"newly_failing": [], "baseline_passing": baseline_passing},
             )
         return VerifyResult(
             passed=False,
@@ -70,7 +76,7 @@ class CommandOraclePlugin(ExperimentPlugin):
                     severity=FindingSeverity.HIGH,
                 )
             ],
-            evidence={"newly_failing": [journey]},
+            evidence={"newly_failing": [journey], "baseline_passing": baseline_passing},
         )
 
     async def _exec(self, config: dict[str, Any]) -> int:
