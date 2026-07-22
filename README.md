@@ -16,9 +16,10 @@ band and the meta-harness who audits every musician.
 
 A multi-agent system that **closes the loop** on chaos engineering: it
 generates hypotheses by reading the target's source, injects faults via
-[Chaos Mesh](https://chaos-mesh.org/), verifies steady state with statistical
-baselines, diagnoses regressions with cited evidence, and opens a **draft
-PR** with the proposed fix + a regression test.
+[Chaos Mesh](https://chaos-mesh.org/) (or a hardware bench for RF / power /
+sensor faults), verifies steady state with statistical baselines, diagnoses
+regressions with cited evidence, and opens a **draft PR** with the proposed fix
++ a regression test.
 
 Inject-only tools like Chaos Mesh, Litmus, AWS FIS, and Gremlin stop after
 the fault. A human reads dashboards, files a Jira ticket, opens a PR weeks
@@ -34,6 +35,8 @@ proves it stays gone. See [**docs/REGRESSION.md**](docs/REGRESSION.md).
 <p align="center">
   <img src="docs/cast/diagram_cast.png" alt="The orchestrator delegating to five agents: tester, chaos, security, diagnostician, fixer — each labelled with its responsibilities" width="780" />
 </p>
+
+<p align="center"><sub>The <b>discovery loop</b>. Regression suites and experiment plugins reuse this same cast — no new agents, no new state.</sub></p>
 
 ---
 
@@ -565,6 +568,22 @@ scenarios and asserting everything that used to hold still holds. Each scenario
 is an `ExperimentPlan` under the hood, so it runs through the same state machine
 and the same safety gates; the pass/fail **oracle** is the customer's own suite
 (a Playwright project, or any exit-code command).
+
+```mermaid
+flowchart TD
+    S["scaffold<br/>enumerate journeys"] --> V["validate<br/>lint fault names + journeys"]
+    V --> RUN["run suite"]
+    RUN --> EACH{"for each<br/>scenario"}
+    EACH --> BASE["capture_baseline<br/>customer suite, CLEAN"]
+    BASE --> INJ["inject the frozen fault"]
+    INJ --> VER["verify<br/>customer suite, UNDER FAULT"]
+    VER --> DELTA["newly-failing delta<br/>green-at-baseline then red-now"]
+    DELTA --> VERDICT{"verdict"}
+    VERDICT --> PASS["PASS"]
+    VERDICT --> REG["REGRESSED"]
+    VERDICT --> BF["BASELINE_FAIL"]
+    RUN --> COV["coverage matrix<br/>fault-by-journey: covered / gap"]
+```
 
 ```bash
 # Bootstrap a suite from a Playwright project's journeys.
