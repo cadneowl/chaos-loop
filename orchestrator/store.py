@@ -28,6 +28,8 @@ from shared.contracts import (
     ExperimentId,
     ExperimentRecord,
     ExperimentState,
+    SuiteRunId,
+    SuiteRunRecord,
 )
 
 # How long a connection waits for a contended write lock before raising
@@ -48,6 +50,17 @@ CREATE TABLE IF NOT EXISTS experiments (
 
 CREATE INDEX IF NOT EXISTS idx_state ON experiments(state);
 CREATE INDEX IF NOT EXISTS idx_started_at ON experiments(started_at);
+
+CREATE TABLE IF NOT EXISTS suite_runs (
+    suite_run_id TEXT PRIMARY KEY,
+    suite_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    blob TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_suite_id ON suite_runs(suite_id);
+CREATE INDEX IF NOT EXISTS idx_suite_started_at ON suite_runs(started_at);
 """
 
 # Idempotent column adds. Each entry is (column-name, ALTER statement).
@@ -158,6 +171,48 @@ class ExperimentStore:
                 (limit,),
             ).fetchall()
         return [ExperimentRecord.model_validate(json.loads(r[0])) for r in rows]
+
+    # -- regression suite runs -------------------------------------------------
+
+    def save_suite_run(self, record: SuiteRunRecord) -> None:
+        """Upsert one regression suite run. Per-scenario ExperimentRecords are
+        saved separately by the loop; a verdict links to them by experiment_id."""
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO suite_runs "
+                "(suite_run_id, suite_id, started_at, finished_at, blob) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(suite_run_id) DO UPDATE SET "
+                "  suite_id=excluded.suite_id, "
+                "  started_at=excluded.started_at, "
+                "  finished_at=excluded.finished_at, "
+                "  blob=excluded.blob",
+                (
+                    record.suite_run_id,
+                    record.suite_id,
+                    record.started_at.isoformat(),
+                    record.finished_at.isoformat() if record.finished_at else None,
+                    record.model_dump_json(),
+                ),
+            )
+
+    def load_suite_run(self, suite_run_id: SuiteRunId) -> SuiteRunRecord | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT blob FROM suite_runs WHERE suite_run_id = ?",
+                (suite_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SuiteRunRecord.model_validate(json.loads(row[0]))
+
+    def recent_suite_runs(self, limit: int = 20) -> list[SuiteRunRecord]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT blob FROM suite_runs ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [SuiteRunRecord.model_validate(json.loads(r[0])) for r in rows]
 
     # -- control plane ---------------------------------------------------------
 

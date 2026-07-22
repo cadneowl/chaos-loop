@@ -681,3 +681,165 @@ class ExperimentRecord(BaseModel):
     plugin_stage_results: list[StageResult] = Field(default_factory=list)
     verify_result: VerifyResult | None = None
     plugin_diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------- resilience regression suite ---------------------------------------
+#
+# Regression testing replays a *curated corpus* of frozen scenarios and asks
+# "does everything that used to hold still hold?" — the confirmation counterpart
+# to the discovery loop. A scenario is an ``ExperimentPlan`` + an oracle plugin;
+# a suite is many scenarios plus a coverage view. See REGRESSION_TESTING_PLAN.md.
+
+SuiteId = Annotated[str, Field(pattern=r"^suite-[0-9a-f]{12}$")]
+SuiteRunId = Annotated[str, Field(pattern=r"^srun-[0-9a-f]{12}$")]
+ScenarioId = Annotated[str, Field(pattern=r"^scn-[0-9a-f]{12}$")]
+
+
+class OracleKind(StrEnum):
+    """How a scenario decides pass/fail under fault."""
+
+    PLAYWRIGHT = "playwright"  # inherit a customer Playwright suite (boolean, delta)
+    COMMAND = "command"  # any shell command; exit code is the oracle
+    METRIC = "metric"  # statistical distribution diff (v2)
+    NEGATIVE = "negative"  # must-not-happen assertion (v3)
+
+
+class RegressionOutcome(StrEnum):
+    PASS = "pass"  # no newly-failing journeys under fault
+    REGRESSED = "regressed"  # a baseline-green journey went red under fault
+    BASELINE_FAIL = "baseline_fail"  # suite already red pre-fault — not a resilience regression
+    ERROR = "error"  # scenario could not run (infra / oracle error)
+
+
+class CoverageState(StrEnum):
+    COVERED = "covered"  # a scenario pairs this fault with this journey and it ran
+    GAP = "gap"  # relevant but no scenario
+    NA = "na"  # provably irrelevant — must carry trace evidence (v2)
+    UNKNOWN = "unknown"  # relevance not yet established (v1 default); counts as a gap
+
+
+class Golden(BaseModel):
+    """Frozen chronic-axis baseline for a scenario, pinned to a target ref.
+
+    Populated in v2 to detect *drift* ("is p95 worse than release N-1?") — the
+    complement to the acute, per-run baseline the oracle captures live.
+    """
+
+    target_ref: str
+    metrics: list[StatisticalSample] = Field(default_factory=list)
+    passing_journeys: list[str] = Field(default_factory=list)
+    captured_at: datetime = Field(default_factory=_now)
+
+
+class RegressionScenario(BaseModel):
+    """One frozen, replayable resilience check."""
+
+    scenario_id: ScenarioId = Field(default_factory=lambda: _new_id("scn"))
+    title: str
+    fault: FaultSpec
+    oracle: OracleKind = OracleKind.PLAYWRIGHT
+    oracle_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Opaque config for the oracle plugin (suite_path, retries, grep, ...).",
+    )
+    journeys: list[str] = Field(
+        default_factory=list,
+        description="Journey/test ids this scenario asserts; drives the coverage invariant axis.",
+    )
+    target_ref: str | None = Field(
+        default=None, description="Commit / image digest this scenario was frozen against."
+    )
+    origin: Literal["manual", "fixer", "inherited", "intent"] = "manual"
+    source_ref: str | None = Field(
+        default=None, description="Provenance: fixer PR, Jira key, GitLab MR, ..."
+    )
+    golden: Golden | None = None
+
+
+class RegressionSuite(BaseModel):
+    """An ordered corpus of scenarios plus the full journey denominator."""
+
+    suite_id: SuiteId = Field(default_factory=lambda: _new_id("suite"))
+    name: str
+    target_app: str
+    target_repo: str | None = None
+    # Every scenario runs through the orchestrator's real safety gates; the suite
+    # declares the (non-prod) cluster/namespace once and each derived plan inherits it.
+    safety: SafetyConstraints
+    budget: TokenBudget = Field(default_factory=TokenBudget)
+    scenarios: list[RegressionScenario]
+    all_journeys: list[str] = Field(
+        default_factory=list,
+        description="Every journey the customer's suite exposes (coverage denominator).",
+    )
+
+
+class RegressionVerdict(BaseModel):
+    """The outcome of replaying one scenario, linked to its ExperimentRecord."""
+
+    scenario_id: ScenarioId
+    title: str = ""  # scenario title, carried so `show` can render without the suite
+    fault: str = ""  # fault name, for at-a-glance results
+    experiment_id: ExperimentId
+    outcome: RegressionOutcome
+    newly_failing: list[str] = Field(default_factory=list)
+    verify_result: VerifyResult | None = None
+    detail: str = ""
+
+
+class CoverageCell(BaseModel):
+    fault: str  # CATALOGUE key
+    journey: str
+    state: CoverageState
+    scenario_id: ScenarioId | None = None
+    evidence: dict[str, Any] = Field(
+        default_factory=dict, description="Trace/graph facts backing an NA verdict (v2)."
+    )
+
+
+class CoverageMatrix(BaseModel):
+    """Fault-by-journey coverage. Rollups are derived from ``cells``."""
+
+    suite_id: SuiteId
+    faults: list[str]
+    journeys: list[str]
+    cells: list[CoverageCell] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def covered(self) -> int:
+        return sum(1 for c in self.cells if c.state == CoverageState.COVERED)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def gaps(self) -> int:
+        return sum(
+            1 for c in self.cells if c.state in (CoverageState.GAP, CoverageState.UNKNOWN)
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def na(self) -> int:
+        return sum(1 for c in self.cells if c.state == CoverageState.NA)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def comprehensiveness(self) -> float | None:
+        """Covered / (covered + gaps). NA cells are excluded — the *relevant* denominator.
+
+        ``None`` when there is nothing to measure (no relevant cells) so callers
+        render "n/a" rather than a meaningless 100%.
+        """
+        denom = self.covered + self.gaps
+        return self.covered / denom if denom else None
+
+
+class SuiteRunRecord(BaseModel):
+    """The audit trail of one suite execution. Persisted to SQLite."""
+
+    suite_run_id: SuiteRunId = Field(default_factory=lambda: _new_id("srun"))
+    suite_id: SuiteId
+    verdicts: list[RegressionVerdict] = Field(default_factory=list)
+    coverage: CoverageMatrix | None = None
+    started_at: datetime = Field(default_factory=_now)
+    finished_at: datetime | None = None

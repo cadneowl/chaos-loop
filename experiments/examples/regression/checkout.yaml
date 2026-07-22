@@ -1,0 +1,44 @@
+# Resilience regression suite: does the checkout journey survive infra faults?
+# Replay:  chaos regression run experiments/examples/regression/checkout.yaml --dry-run
+# Coverage: chaos regression coverage experiments/examples/regression/checkout.yaml --fault network.loss
+name: checkout-resilience
+target_app: otel-demo
+target_repo: https://github.com/open-telemetry/opentelemetry-demo
+
+safety:
+  cluster_context: kind-chaos
+  namespace: otel-demo
+  max_pods_affected: 1
+  max_duration_seconds: 120
+  require_namespace_annotation: true
+
+# Applied to every scenario below (scenario-level keys win).
+oracle: playwright
+oracle_defaults:
+  suite_path: ./e2e
+  base_url: http://localhost:8080
+  retries: 2
+
+# The full journey denominator (invariant axis of the coverage matrix).
+all_journeys:
+  - "checkout.spec.ts:add-to-cart"
+  - "checkout.spec.ts:pay"
+  - "browse.spec.ts:list-products"
+
+scenarios:
+  - title: checkout survives valkey-cart network loss
+    fault:
+      category: network
+      name: network.loss
+      target_selector:
+        app.kubernetes.io/component: valkey-cart
+      parameters:
+        loss_percent: 100
+        direction: to
+      duration_seconds: 60
+      rationale: >
+        cartservice has a hard dep on valkey-cart; verify the checkout journey
+        degrades gracefully rather than hanging when the cache is unreachable.
+    journeys:
+      - "checkout.spec.ts:add-to-cart"
+      - "checkout.spec.ts:pay"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import typer
 import yaml
@@ -16,8 +17,10 @@ from orchestrator.loop import Agents, ExperimentRunner
 from orchestrator.store import ExperimentStore
 from shared.contracts import (
     AbortReason,
+    CoverageMatrix,
     ExperimentPlan,
     ExperimentState,
+    SuiteRunRecord,
 )
 
 app = typer.Typer(help="Closed-loop chaos engineering orchestrator.", no_args_is_help=True)
@@ -689,6 +692,384 @@ def catalogue_verify_cmd(
     console.print(
         f"[green]ok[/green] — {len(candidates)} hardware faults verified end-to-end"
     )
+
+
+regression_app = typer.Typer(
+    help="Resilience regression suites: replay frozen scenarios, report coverage.",
+    no_args_is_help=True,
+)
+app.add_typer(regression_app, name="regression")
+
+
+def _build_regression_agents(
+    *,
+    dry_run: bool,
+    profile: str,
+    harness: Any,
+    prom_url: str | None,
+    loki_url: str | None,
+    target_repo_path: str | None,
+    kubeconfig: str | None,
+    kube_context: str | None,
+    model: str,
+    api_base: str | None,
+) -> Agents:
+    """Build the agent set for a regression run (dry-run mocks or real agents).
+
+    Mirrors the non-hardware wiring of ``run``; hardware benches are out of
+    scope for the v1 regression suite.
+    """
+    if dry_run:
+        from agents._mocks import build_mock_agents
+
+        wrapped = {
+            name: harness.instrument(name, inst)
+            for name, inst in build_mock_agents().items()
+        }
+        return Agents(**wrapped)
+
+    from agents._factory import (
+        AgentConfig,
+        AgentConfigError,
+        Profile,
+        build_real_agents,
+    )
+
+    if profile not in ("static", "hybrid", "llm"):
+        raise typer.BadParameter(
+            f"--profile must be one of static / hybrid / llm, got {profile!r}"
+        )
+    profile_lit: Profile = profile  # type: ignore[assignment]
+    cfg = AgentConfig(
+        prom_url=prom_url,
+        loki_url=loki_url,
+        target_repo_path=target_repo_path,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        model=model,
+        api_base=api_base,
+    )
+    try:
+        return build_real_agents(cfg, profile=profile_lit, harness=harness)
+    except AgentConfigError as e:
+        raise typer.BadParameter(str(e)) from e
+
+
+def _print_suite_run(record: SuiteRunRecord) -> None:
+    from shared.contracts import RegressionOutcome
+
+    styles = {
+        RegressionOutcome.PASS: "green",
+        RegressionOutcome.REGRESSED: "red",
+        RegressionOutcome.BASELINE_FAIL: "yellow",
+        RegressionOutcome.ERROR: "magenta",
+    }
+    table = Table("scenario", "fault", "outcome", "detail")
+    for v in record.verdicts:
+        style = styles.get(v.outcome, "white")
+        if v.outcome == RegressionOutcome.REGRESSED:
+            detail = "newly failing: " + (", ".join(v.newly_failing) or "?")
+        elif v.outcome in (RegressionOutcome.ERROR, RegressionOutcome.BASELINE_FAIL):
+            detail = v.detail or "[dim]—[/dim]"
+        else:
+            detail = "[dim]—[/dim]"
+        table.add_row(
+            v.title or v.scenario_id,
+            v.fault or "[dim]?[/dim]",
+            f"[{style}]{v.outcome.value}[/{style}]",
+            detail,
+        )
+    console.print(table)
+    counts = {o: 0 for o in RegressionOutcome}
+    for v in record.verdicts:
+        counts[v.outcome] += 1
+    console.print(
+        f"suite_run={record.suite_run_id}  scenarios={len(record.verdicts)}  "
+        f"[green]pass={counts[RegressionOutcome.PASS]}[/green]  "
+        f"[red]regressed={counts[RegressionOutcome.REGRESSED]}[/red]  "
+        f"[yellow]baseline_fail={counts[RegressionOutcome.BASELINE_FAIL]}[/yellow]  "
+        f"[magenta]error={counts[RegressionOutcome.ERROR]}[/magenta]"
+    )
+    console.print(f"[dim]inspect: chaos regression show {record.suite_run_id}[/dim]")
+    if record.coverage is not None:
+        _print_coverage_summary(record.coverage)
+
+
+def _print_coverage_summary(matrix: CoverageMatrix) -> None:
+    comp = (
+        "n/a"
+        if matrix.comprehensiveness is None
+        else f"{matrix.comprehensiveness:.0%}"
+    )
+    console.print(
+        f"coverage: [green]{matrix.covered} covered[/green] / "
+        f"[yellow]{matrix.gaps} gap[/yellow] / {matrix.na} n-a  "
+        f"(relevant comprehensiveness {comp})"
+    )
+    console.print(
+        f"[dim]axis: {len(matrix.faults)} fault(s) x {len(matrix.journeys)} journey(s). "
+        f"Scope with --fault; add scenarios to close gaps.[/dim]"
+    )
+
+
+@regression_app.command("run")
+def regression_run_cmd(
+    suite_path: Path = typer.Argument(..., exists=True, readable=True),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Use mock agents (no external deps)."),
+    profile: str = typer.Option("static", "--profile", help="static / hybrid / llm."),
+    db: Path | None = typer.Option(None, "--db", help="SQLite path."),
+    prom_url: str | None = typer.Option(None, "--prom-url", envvar="PROM_URL"),
+    loki_url: str | None = typer.Option(None, "--loki-url", envvar="LOKI_URL"),
+    target_repo_path: str | None = typer.Option(
+        None, "--target-repo-path", envvar="TARGET_REPO_PATH"
+    ),
+    kubeconfig: str | None = typer.Option(None, "--kubeconfig", envvar="KUBECONFIG"),
+    kube_context: str | None = typer.Option(None, "--kube-context", envvar="KUBE_CONTEXT"),
+    model: str = typer.Option("claude-opus-4-7", "--model", envvar="CHAOS_LLM_MODEL"),
+    api_base: str | None = typer.Option(None, "--api-base", envvar="CHAOS_LLM_API_BASE"),
+) -> None:
+    """Replay every scenario in a regression suite and report verdicts + coverage."""
+    from regression.scenario import load_suite
+    from regression.suite_runner import SuiteRunner
+
+    suite = load_suite(suite_path)
+    store = _store(db)
+
+    from agents._harness import Harness
+
+    harness = Harness()
+    agents = _build_regression_agents(
+        dry_run=dry_run,
+        profile=profile,
+        harness=harness,
+        prom_url=prom_url,
+        loki_url=loki_url,
+        target_repo_path=target_repo_path,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        model=model,
+        api_base=api_base,
+    )
+    suite_runner = SuiteRunner.with_agents(agents, store, harness=harness)
+    overrides: dict[str, object] = {"_dry_run": True} if dry_run else {}
+
+    from shared.contracts import RegressionOutcome, RegressionVerdict
+
+    _dots = {
+        RegressionOutcome.PASS: "[green]pass[/green]",
+        RegressionOutcome.REGRESSED: "[red]REGRESSED[/red]",
+        RegressionOutcome.BASELINE_FAIL: "[yellow]baseline_fail[/yellow]",
+        RegressionOutcome.ERROR: "[magenta]error[/magenta]",
+    }
+
+    def _progress(done: int, total: int, v: RegressionVerdict) -> None:
+        console.print(
+            f"[dim][{done}/{total}][/dim] {v.title or v.scenario_id} "
+            f"… {_dots.get(v.outcome, v.outcome.value)}"
+        )
+
+    record = asyncio.run(
+        suite_runner.run(
+            suite, plugin_config_overrides=overrides, on_progress=_progress
+        )
+    )
+    console.print()
+    _print_suite_run(record)
+    if any(v.outcome.value == "regressed" for v in record.verdicts):
+        raise typer.Exit(code=1)
+
+
+@regression_app.command("coverage")
+def regression_coverage_cmd(
+    suite_path: Path = typer.Argument(..., exists=True, readable=True),
+    fault: list[str] = typer.Option(
+        None,
+        "--fault",
+        help="Scope the fault axis (repeatable). Default: catalogue faults in the "
+        "categories the suite uses.",
+    ),
+) -> None:
+    """Render the fault-by-journey coverage matrix for a suite (no runs required)."""
+    from regression.coverage import CoverageReporter
+    from regression.scenario import load_suite
+
+    suite = load_suite(suite_path)
+    selected = list(fault or [])
+    matrix = CoverageReporter().render(suite, faults=selected)
+    _print_coverage_summary(matrix)
+    # Detailed grid only when the caller scoped the axis (else it's unreadably wide).
+    if selected:
+        by_key = {(c.fault, c.journey): c for c in matrix.cells}
+        table = Table("journey", *matrix.faults)
+        for journey in matrix.journeys:
+            marks = [
+                "[green]✓[/green]"
+                if (cell := by_key.get((f, journey))) and cell.scenario_id
+                else "·"
+                for f in matrix.faults
+            ]
+            table.add_row(journey, *marks)
+        console.print(table)
+
+
+@regression_app.command("validate")
+def regression_validate_cmd(
+    suite_path: Path = typer.Argument(..., exists=True, readable=True),
+) -> None:
+    """Check a suite for problems (bad fault names, journeys not in all_journeys).
+
+    Runs nothing — a pure offline lint of the suite file.
+    """
+    from regression.scenario import load_suite, validate_suite
+
+    suite = load_suite(suite_path, validate=False)
+    problems = validate_suite(suite)
+    if problems:
+        console.print(f"[red]{len(problems)} problem(s) in {suite_path.name}:[/red]")
+        for p in problems:
+            console.print(f"  [red]•[/red] {p}")
+        raise typer.Exit(code=1)
+    console.print(
+        f"[green]ok[/green] — {len(suite.scenarios)} scenario(s), "
+        f"{len(suite.all_journeys)} journey(s), no problems."
+    )
+
+
+@regression_app.command("list")
+def regression_list_cmd(
+    db: Path | None = typer.Option(None, "--db"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """List recent regression suite runs."""
+    from shared.contracts import RegressionOutcome
+
+    runs = _store(db).recent_suite_runs(limit)
+    if not runs:
+        console.print("[dim]no suite runs recorded yet.[/dim]")
+        return
+    table = Table("suite_run", "suite", "started", "scenarios", "regressed")
+    for r in runs:
+        regressed = sum(
+            1 for v in r.verdicts if v.outcome == RegressionOutcome.REGRESSED
+        )
+        table.add_row(
+            r.suite_run_id,
+            r.suite_id,
+            r.started_at.isoformat(timespec="seconds"),
+            str(len(r.verdicts)),
+            f"[red]{regressed}[/red]" if regressed else "0",
+        )
+    console.print(table)
+
+
+def _scaffold_yaml(
+    name: str, target_app: str, suite_path: str, journeys: list[str]
+) -> str:
+    """A minimal, commented starter suite — only the fields a human needs to edit."""
+    all_lines = "\n".join(f"  - {json.dumps(j)}" for j in journeys)
+    return f"""\
+# Regression suite for {target_app}, generated by `chaos regression scaffold`.
+# Edit the scenario below: pick a real fault (see `chaos list-faults`), say why
+# it threatens the journey, and list the journey(s) it must not break.
+name: {name}
+target_app: {target_app}
+# target_repo: https://git/...        # optional; enables source-aware diagnosis
+
+safety:
+  cluster_context: kind-chaos          # a NON-prod cluster
+  namespace: {target_app}
+  # On a shared cluster set this true and annotate the namespace; left false so
+  # a local `kind` run works out of the box.
+  require_namespace_annotation: false
+
+oracle: playwright
+oracle_defaults:
+  suite_path: {json.dumps(suite_path)}   # your Playwright project directory
+  # base_url: http://localhost:8080
+  retries: 2
+
+scenarios:
+  - title: "{target_app} survives a pod restart"
+    fault:
+      category: pod
+      name: pod.kill                   # see `chaos list-faults`
+      target_selector: {{ app: {target_app} }}
+      duration_seconds: 30
+      rationale: "TODO: why this fault threatens the journey below"
+    journeys:                          # which journey(s) this fault must not break
+      - {json.dumps(journeys[0])}
+
+# Every journey your suite exposes — the coverage denominator:
+all_journeys:
+{all_lines}
+"""
+
+
+@regression_app.command("scaffold")
+def regression_scaffold_cmd(
+    out_path: Path = typer.Argument(..., help="Where to write the starter suite YAML."),
+    suite_path: str = typer.Option(".", "--suite-path", help="Playwright project dir."),
+    list_json: Path | None = typer.Option(
+        None,
+        "--list-json",
+        help="A `playwright test --list --reporter=json` dump. If omitted, runs npx.",
+    ),
+    target_app: str = typer.Option("my-app", "--target-app"),
+) -> None:
+    """Generate a starter suite by enumerating a Playwright project's journeys."""
+    import subprocess
+
+    from regression.oracles.playwright import list_journeys
+    from regression.scenario import load_suite
+
+    if list_json is not None:
+        data = json.loads(list_json.read_text(encoding="utf-8"))
+    else:
+        proc = subprocess.run(
+            ["npx", "playwright", "test", "--list", "--reporter=json"],
+            cwd=suite_path,
+            capture_output=True,
+            text=True,
+        )
+        if not proc.stdout.strip():
+            console.print(
+                f"[red]could not list Playwright tests in {suite_path!r}[/red]\n"
+                f"{proc.stderr[:500]}"
+            )
+            raise typer.Exit(code=1)
+        data = json.loads(proc.stdout)
+
+    journeys = list_journeys(data)
+    if not journeys:
+        console.print("[yellow]no journeys found — is --suite-path correct?[/yellow]")
+        raise typer.Exit(code=1)
+
+    out_path.write_text(
+        _scaffold_yaml(f"{target_app}-resilience", target_app, suite_path, journeys),
+        encoding="utf-8",
+    )
+    # Round-trip so we never hand back a file that won't load.
+    load_suite(out_path)
+    console.print(
+        f"[green]wrote[/green] {out_path} — {len(journeys)} journey(s), 1 example scenario.\n"
+        "Before running:\n"
+        "  1. edit the scenario's fault + rationale, and the journey(s) it guards\n"
+        "  2. ensure Node + Playwright are installed and the target is reachable\n"
+        f"  3. chaos regression validate {out_path}\n"
+        f"  4. chaos regression run {out_path}"
+    )
+
+
+@regression_app.command("show")
+def regression_show_cmd(
+    suite_run_id: str, db: Path | None = typer.Option(None, "--db")
+) -> None:
+    """Show a stored suite run by id."""
+    record = _store(db).load_suite_run(suite_run_id)
+    if record is None:
+        console.print(f"[red]no suite run found for {suite_run_id!r}[/red]")
+        raise typer.Exit(code=1)
+    _print_suite_run(record)
 
 
 if __name__ == "__main__":
