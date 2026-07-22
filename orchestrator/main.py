@@ -18,6 +18,7 @@ from orchestrator.store import ExperimentStore
 from shared.contracts import (
     AbortReason,
     CoverageMatrix,
+    CoverageState,
     ExperimentPlan,
     ExperimentState,
     SuiteRunRecord,
@@ -888,26 +889,58 @@ def regression_coverage_cmd(
         help="Scope the fault axis (repeatable). Default: catalogue faults in the "
         "categories the suite uses.",
     ),
+    footprints_path: Path | None = typer.Option(
+        None,
+        "--footprints",
+        help="YAML map {journey: [services it traverses]}. Enables provable n/a "
+        "cells (a fault whose target the journey never touches).",
+    ),
 ) -> None:
     """Render the fault-by-journey coverage matrix for a suite (no runs required)."""
     from regression.coverage import CoverageReporter
+    from regression.relevance import FootprintError, check_footprints, parse_footprints
     from regression.scenario import load_suite
 
     suite = load_suite(suite_path)
     selected = list(fault or [])
-    matrix = CoverageReporter().render(suite, faults=selected)
+
+    footprints: dict[str, set[str]] | None = None
+    if footprints_path is not None:
+        raw = yaml.safe_load(footprints_path.read_text(encoding="utf-8"))
+        from rich.markup import escape
+
+        try:
+            footprints = parse_footprints(raw)
+            warnings = check_footprints(footprints, suite)
+        except FootprintError as e:
+            # escape(): messages carry list reprs; keep Rich from eating [brackets].
+            console.print(f"[red]footprints error:[/red] {escape(str(e))}")
+            raise typer.Exit(code=1) from e
+        for w in warnings:
+            console.print(f"[yellow]warning:[/yellow] {escape(w)}")
+
+    matrix = CoverageReporter().render(suite, faults=selected, footprints=footprints)
     _print_coverage_summary(matrix)
+    if footprints is not None:
+        mapped = sum(1 for j in suite.all_journeys if j in footprints)
+        console.print(
+            f"[dim]footprints: {mapped}/{len(suite.all_journeys)} journeys mapped; "
+            f"{matrix.na} cell(s) marked n-a[/dim]"
+        )
     # Detailed grid only when the caller scoped the axis (else it's unreadably wide).
     if selected:
         by_key = {(c.fault, c.journey): c for c in matrix.cells}
         table = Table("journey", *matrix.faults)
         for journey in matrix.journeys:
-            marks = [
-                "[green]✓[/green]"
-                if (cell := by_key.get((f, journey))) and cell.scenario_id
-                else "·"
-                for f in matrix.faults
-            ]
+            marks: list[str] = []
+            for f in matrix.faults:
+                cell = by_key.get((f, journey))
+                if cell and cell.scenario_id:
+                    marks.append("[green]✓[/green]")
+                elif cell and cell.state == CoverageState.NA:
+                    marks.append("[dim]n/a[/dim]")
+                else:
+                    marks.append("·")
             table.add_row(journey, *marks)
         console.print(table)
 

@@ -8,7 +8,8 @@ no changes to `loop.py`.
 
 ```
 scenario.py            load/dump + validate suite YAML; stable suite_id from name
-coverage.py            CoverageReporter — fault-by-journey matrix (covered / gap / unknown)
+coverage.py            CoverageReporter — fault-by-journey matrix (covered / gap / n-a)
+relevance.py           journey footprints -> evidence-backed n-a (declarative + trace sources)
 suite_runner.py        SuiteRunner — replay each scenario, classify the verdict, persist
 oracles/
   playwright.py            inherit a Playwright project; newly-failing delta
