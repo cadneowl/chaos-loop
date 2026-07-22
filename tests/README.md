@@ -26,5 +26,6 @@ pytest tests/
 - `test_suite_runner.py` — outcome classification (PASS/REGRESSED/BASELINE_FAIL/ERROR), persistence, oracle-authoritative verdict, progress callback
 - `test_regression_coverage.py` — coverage matrix (covered/gap/unknown), category-scoped axis, `n/a` comprehensiveness
 - `test_regression_relevance.py` — footprint sources (declarative + trace) and evidence-backed `n-a` classification
+- `test_regression_drift.py` — chronic drift: baseline_passing extraction, golden diff, golden storage round-trip
 
 These run without a cluster or LLM. Live-cluster integration is exercised by the scripts in `scripts/`, not here.

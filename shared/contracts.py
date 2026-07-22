@@ -843,3 +843,46 @@ class SuiteRunRecord(BaseModel):
     coverage: CoverageMatrix | None = None
     started_at: datetime = Field(default_factory=_now)
     finished_at: datetime | None = None
+
+
+# ---------- drift (chronic axis) ----------------------------------------------
+#
+# The acute axis (the oracle's newly-failing delta) asks "does this fault break
+# the journey?" — within one run. The chronic axis asks "has the steady state
+# itself regressed since a previous release?" — comparing a fresh baseline to a
+# stored ``Golden`` pinned to a target ref. Catches boiling-frog drift the acute
+# axis is blind to (a journey that quietly went red at baseline between releases).
+
+
+class ScenarioDrift(BaseModel):
+    """One scenario's baseline drift versus its golden."""
+
+    scenario_id: ScenarioId
+    title: str = ""
+    regressed: list[str] = Field(
+        default_factory=list,
+        description="Journeys green in the golden baseline but failing at baseline now.",
+    )
+    recovered: list[str] = Field(
+        default_factory=list,
+        description="Journeys not green in the golden but passing at baseline now.",
+    )
+    missing_golden: bool = False  # no golden stored for this scenario at the ref
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def drifted(self) -> bool:
+        return bool(self.regressed)
+
+
+class DriftReport(BaseModel):
+    """Baseline drift of a whole suite against a golden ref. Not persisted."""
+
+    suite_id: SuiteId
+    against_ref: str
+    scenarios: list[ScenarioDrift] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def regressed_scenarios(self) -> int:
+        return sum(1 for s in self.scenarios if s.regressed)

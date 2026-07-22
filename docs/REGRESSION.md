@@ -125,6 +125,11 @@ chaos regression coverage <suite.yaml> [--fault NAME ...] [--footprints MAP]
 #   Node / target — good for validating wiring end to end.
 chaos regression run <suite.yaml> [--dry-run] [--profile static|hybrid|llm] [--db PATH]
 
+# Capture / compare the chronic drift baseline (see "Drift" below).
+chaos regression run <suite.yaml> --save-golden --target-ref v1.2.3
+chaos regression run <suite.yaml> --drift-against v1.2.3
+chaos regression goldens <suite.yaml> [--db PATH]
+
 # List recent suite runs, then drill into one.
 chaos regression list [--db PATH]
 chaos regression show <srun-id> [--db PATH]
@@ -175,20 +180,49 @@ A worked example ships at
 with footprints in
 [`checkout.footprints.yaml`](../experiments/examples/regression/checkout.footprints.yaml).
 
+## Drift: the chronic axis
+
+The oracle's newly-failing delta is the **acute** axis — "does this fault break
+the journey?", within one run. It's blind to **chronic** drift: a journey that
+quietly went red *at baseline* between releases (the boiling-frog case — the
+steady state itself degraded). The drift axis catches that by comparing a fresh
+baseline to a stored **golden**.
+
+Every run records which journeys passed at baseline
+(`verify_result.evidence["baseline_passing"]`). Save those as a golden pinned to
+a ref, then diff a later run against it:
+
+```bash
+# Freeze the current steady state as the golden for release v1.2.3.
+chaos regression run my-suite.yaml --save-golden --target-ref v1.2.3
+
+# After changes, report which journeys regressed at baseline vs v1.2.3.
+chaos regression run my-suite.yaml --drift-against v1.2.3
+```
+
+`--drift-against` reports, per scenario, the journeys **regressed** (green in the
+golden, red at baseline now) and **recovered** (newly green). Goldens are stored
+in the `goldens` table keyed by `(suite_id, target_ref, scenario_id)`;
+`chaos regression goldens <suite>` lists the refs you've captured.
+
+> Drift capture rides along a normal run, so the golden reflects the *pre-fault*
+> baseline the oracle measured. A baseline-only fast path (no injection) is a
+> possible follow-up.
+
 ## Persistence
 
 Each suite run is stored as a `SuiteRunRecord` in the `suite_runs` table of the
 same SQLite DB as experiments; every verdict links to the per-scenario
 `ExperimentRecord` by `experiment_id`, so `chaos regression show` can drill into
-full per-scenario detail.
+full per-scenario detail. Golden baselines live in the `goldens` table.
 
 ## Scope
 
 Shipped: inherit a suite → replay under a fault → newly-failing verdict →
-coverage matrix (`covered` / `gap` / evidence-backed `n-a` via footprints).
-Read-only.
+coverage matrix (`covered` / `gap` / evidence-backed `n-a` via footprints) →
+chronic **drift** axis (golden baselines). Read-only.
 
 Later: a concrete Tempo/Jaeger `TraceClient` (footprints from live traces, not
-just declared) and a chronic **drift** axis; negative "must-not-happen"
-assertions; connectors that ingest intent (Jira/GitLab) and propose scenarios
-back.
+just declared); metric-distribution drift (statistical goldens, not just the
+boolean baseline set); negative "must-not-happen" assertions; connectors that
+ingest intent (Jira/GitLab) and propose scenarios back.

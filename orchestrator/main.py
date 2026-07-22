@@ -19,6 +19,7 @@ from shared.contracts import (
     AbortReason,
     CoverageMatrix,
     CoverageState,
+    DriftReport,
     ExperimentPlan,
     ExperimentState,
     SuiteRunRecord,
@@ -828,10 +829,22 @@ def regression_run_cmd(
     kube_context: str | None = typer.Option(None, "--kube-context", envvar="KUBE_CONTEXT"),
     model: str = typer.Option("claude-opus-4-7", "--model", envvar="CHAOS_LLM_MODEL"),
     api_base: str | None = typer.Option(None, "--api-base", envvar="CHAOS_LLM_API_BASE"),
+    save_golden: bool = typer.Option(
+        False, "--save-golden", help="Store this run's baseline as a golden (needs --target-ref)."
+    ),
+    target_ref: str | None = typer.Option(
+        None, "--target-ref", help="Ref (commit/tag) to key a saved golden by."
+    ),
+    drift_against: str | None = typer.Option(
+        None, "--drift-against", help="Report baseline drift vs the golden stored for this ref."
+    ),
 ) -> None:
     """Replay every scenario in a regression suite and report verdicts + coverage."""
     from regression.scenario import load_suite
     from regression.suite_runner import SuiteRunner
+
+    if save_golden and not target_ref:
+        raise typer.BadParameter("--save-golden requires --target-ref")
 
     suite = load_suite(suite_path)
     store = _store(db)
@@ -876,8 +889,72 @@ def regression_run_cmd(
     )
     console.print()
     _print_suite_run(record)
+
+    if save_golden and target_ref:
+        from regression.drift import goldens_from_run
+
+        goldens = goldens_from_run(record, target_ref)
+        store.save_goldens(suite.suite_id, target_ref, goldens)
+        console.print(
+            f"[green]saved golden[/green] for ref {target_ref!r} "
+            f"({len(goldens)} scenario(s))"
+        )
+    if drift_against:
+        from regression.drift import drift_report
+
+        goldens = store.load_goldens(suite.suite_id, drift_against)
+        if not goldens:
+            console.print(
+                f"[yellow]no golden stored for ref {drift_against!r} "
+                f"(save one with --save-golden --target-ref).[/yellow]"
+            )
+        else:
+            _print_drift(drift_report(record, goldens, drift_against))
+
     if any(v.outcome.value == "regressed" for v in record.verdicts):
         raise typer.Exit(code=1)
+
+
+def _print_drift(report: DriftReport) -> None:
+    console.print()
+    table = Table("scenario", "baseline drift vs " + report.against_ref)
+    for s in report.scenarios:
+        if s.missing_golden:
+            detail = "[dim]no golden[/dim]"
+        elif s.regressed:
+            detail = "[red]regressed at baseline: " + ", ".join(s.regressed) + "[/red]"
+        elif s.recovered:
+            detail = "[green]recovered: " + ", ".join(s.recovered) + "[/green]"
+        else:
+            detail = "[dim]stable[/dim]"
+        table.add_row(s.title or s.scenario_id, detail)
+    console.print(table)
+    console.print(
+        f"drift vs {report.against_ref}: "
+        f"[red]{report.regressed_scenarios} scenario(s) regressed at baseline[/red]"
+    )
+
+
+@regression_app.command("goldens")
+def regression_goldens_cmd(
+    suite_path: Path = typer.Argument(..., exists=True, readable=True),
+    db: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """List the golden baselines stored for a suite."""
+    from regression.scenario import load_suite
+
+    suite = load_suite(suite_path)
+    refs = _store(db).golden_refs(suite.suite_id)
+    if not refs:
+        console.print(
+            "[dim]no goldens stored. Capture one with "
+            "`chaos regression run <suite> --save-golden --target-ref <ref>`.[/dim]"
+        )
+        return
+    table = Table("target_ref", "scenarios", "captured")
+    for ref, count, captured in refs:
+        table.add_row(ref, str(count), captured)
+    console.print(table)
 
 
 @regression_app.command("coverage")

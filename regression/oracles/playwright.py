@@ -128,6 +128,10 @@ class PlaywrightOraclePlugin(ExperimentPlugin):
         # suite is broken — we can't assess resilience. Report it as unassessable
         # (-> BASELINE_FAIL) instead of a misleading PASS over an empty delta, and
         # skip the redundant under-fault run.
+        # ``baseline_passing`` is recorded on every branch so a golden (the
+        # chronic drift axis) can be captured from any run's verify_result.
+        baseline_passing = sorted(green)
+
         if asserted and not (asserted & green) and (asserted & baseline_failed):
             return VerifyResult(
                 passed=True,
@@ -136,6 +140,7 @@ class PlaywrightOraclePlugin(ExperimentPlugin):
                 evidence={
                     "baseline_unassessable": True,
                     "baseline_failed": sorted(asserted & baseline_failed),
+                    "baseline_passing": baseline_passing,
                     "newly_failing": [],
                 },
             )
@@ -146,7 +151,7 @@ class PlaywrightOraclePlugin(ExperimentPlugin):
             return VerifyResult(
                 passed=True,
                 summary="all baseline-green journeys survived the fault",
-                evidence={"newly_failing": [], "checked": sorted(green)},
+                evidence={"newly_failing": [], "baseline_passing": baseline_passing},
             )
         return VerifyResult(
             passed=False,
@@ -161,7 +166,7 @@ class PlaywrightOraclePlugin(ExperimentPlugin):
                 )
                 for sid in newly_failing
             ],
-            evidence={"newly_failing": newly_failing},
+            evidence={"newly_failing": newly_failing, "baseline_passing": baseline_passing},
         )
 
     async def collect_diagnostics(self, ctx: PluginContext) -> dict[str, Any]:
