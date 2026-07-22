@@ -7,14 +7,21 @@ footprint, or an intersecting one, or a fault with no scenario target => never N
 
 from __future__ import annotations
 
+import pytest
+
 from regression.coverage import CoverageReporter
 from regression.relevance import (
     DeclarativeRelevanceSource,
+    FootprintError,
     TraceRelevanceSource,
+    check_footprints,
     fault_target_services,
+    parse_footprints,
     suite_fault_targets,
 )
 from shared.contracts import (
+    CoverageCell,
+    CoverageMatrix,
     CoverageState,
     FaultCategory,
     FaultSpec,
@@ -69,9 +76,52 @@ async def test_trace_source_omits_journeys_whose_trace_errors() -> None:
     assert fp == {"a": {"frontend", "redis"}, "b": {"frontend"}}  # boom left unknown
 
 
+async def test_declarative_source_rejects_string_value() -> None:
+    with pytest.raises(TypeError, match="must be a list"):
+        DeclarativeRelevanceSource({"j": "frontend"})  # type: ignore[dict-item]
+
+
 def test_fault_target_services_reads_selector_values() -> None:
     f = _fault("network.loss", {"app.kubernetes.io/component": "valkey-cart"})
     assert fault_target_services(f) == {"valkey-cart"}
+
+
+# ----- footprints file validation -------------------------------------------
+
+
+def test_parse_footprints_rejects_non_mapping() -> None:
+    with pytest.raises(FootprintError, match="must be a YAML mapping"):
+        parse_footprints(["a", "b"])
+
+
+def test_parse_footprints_rejects_string_value() -> None:
+    # The dangerous footgun: 'frontend' would iterate into {'f','r','o',...}.
+    with pytest.raises(FootprintError, match="must be a list"):
+        parse_footprints({"j": "frontend"})
+
+
+def test_parse_footprints_normalizes_lists() -> None:
+    assert parse_footprints({"j": ["a", "b"]}) == {"j": {"a", "b"}}
+
+
+def test_check_footprints_raises_on_unknown_journey() -> None:
+    with pytest.raises(FootprintError, match="not in the suite"):
+        check_footprints({"typo:journey": {"s"}}, _suite())
+
+
+def test_check_footprints_warns_on_total_name_mismatch() -> None:
+    # Suite targets {redis}; these names share nothing with it.
+    warnings = check_footprints(
+        {"cart:add": {"cart-svc"}, "browse:list": {"catalog"}}, _suite()
+    )
+    assert any("no footprint service name matches" in w for w in warnings)
+
+
+def test_check_footprints_no_warning_on_partial_match() -> None:
+    warnings = check_footprints(
+        {"cart:add": {"redis"}, "browse:list": {"catalog"}}, _suite()
+    )
+    assert warnings == []
 
 
 def test_suite_fault_targets_unions_over_scenarios() -> None:
@@ -81,8 +131,8 @@ def test_suite_fault_targets_unions_over_scenarios() -> None:
 # ----- classification -------------------------------------------------------
 
 
-def _cells(matrix: object) -> dict[tuple[str, str], CoverageState]:
-    return {(c.fault, c.journey): c for c in matrix.cells}  # type: ignore[attr-defined]
+def _cells(matrix: CoverageMatrix) -> dict[tuple[str, str], CoverageCell]:
+    return {(c.fault, c.journey): c for c in matrix.cells}
 
 
 def test_disjoint_footprint_is_na_with_evidence() -> None:

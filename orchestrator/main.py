@@ -898,7 +898,7 @@ def regression_coverage_cmd(
 ) -> None:
     """Render the fault-by-journey coverage matrix for a suite (no runs required)."""
     from regression.coverage import CoverageReporter
-    from regression.relevance import DeclarativeRelevanceSource
+    from regression.relevance import FootprintError, check_footprints, parse_footprints
     from regression.scenario import load_suite
 
     suite = load_suite(suite_path)
@@ -906,12 +906,27 @@ def regression_coverage_cmd(
 
     footprints: dict[str, set[str]] | None = None
     if footprints_path is not None:
-        raw = yaml.safe_load(footprints_path.read_text(encoding="utf-8")) or {}
-        source = DeclarativeRelevanceSource(raw)
-        footprints = asyncio.run(source.footprints(suite.all_journeys))
+        raw = yaml.safe_load(footprints_path.read_text(encoding="utf-8"))
+        from rich.markup import escape
+
+        try:
+            footprints = parse_footprints(raw)
+            warnings = check_footprints(footprints, suite)
+        except FootprintError as e:
+            # escape(): messages carry list reprs; keep Rich from eating [brackets].
+            console.print(f"[red]footprints error:[/red] {escape(str(e))}")
+            raise typer.Exit(code=1) from e
+        for w in warnings:
+            console.print(f"[yellow]warning:[/yellow] {escape(w)}")
 
     matrix = CoverageReporter().render(suite, faults=selected, footprints=footprints)
     _print_coverage_summary(matrix)
+    if footprints is not None:
+        mapped = sum(1 for j in suite.all_journeys if j in footprints)
+        console.print(
+            f"[dim]footprints: {mapped}/{len(suite.all_journeys)} journeys mapped; "
+            f"{matrix.na} cell(s) marked n-a[/dim]"
+        )
     # Detailed grid only when the caller scoped the axis (else it's unreadably wide).
     if selected:
         by_key = {(c.fault, c.journey): c for c in matrix.cells}

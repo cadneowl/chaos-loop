@@ -93,9 +93,19 @@ chaos regression coverage my-suite.yaml --fault network.loss --footprints footpr
 
 Footprints come from a pluggable source (`regression/relevance.py`): a declarative
 map today, or a `TraceRelevanceSource` backed by a distributed-tracing client (the
-concrete Tempo/Jaeger client is the remaining wiring). A footprint is only ever
-*evidence for* irrelevance — a missing or intersecting footprint leaves the cell a
-gap, never a silent n-a.
+concrete Tempo/Jaeger client is the remaining wiring — so "trace-based" is
+declarative-only in practice for now). A footprint is only ever *evidence for*
+irrelevance — a missing or intersecting footprint leaves the cell a gap, never a
+silent n-a.
+
+> **Naming contract.** Footprint service names must match the **values** in a
+> fault's `target_selector` (here, `valkey-cart`). This is the sharp edge:
+> distributed traces often name services differently than k8s label selectors
+> (`cart` vs `valkey-cart`), and a mismatch would mark cells falsely `n-a`. The
+> loader fails loud on malformed maps and unknown journeys, and warns when a
+> footprints file shares **no** service name with any fault target (a strong
+> mismatch signal) — but keeping the two namespaces aligned is on you until the
+> footprints are derived from the same source that defines the targets.
 
 ## CLI
 
