@@ -73,7 +73,10 @@ jobs:
       # Catches contract / loader / catalogue drift in the regression surface
       # without needing a live target (coverage runs no scenarios).
       - name: chaos regression coverage
-        run: chaos regression coverage experiments/examples/regression/checkout.yaml --fault network.loss
+        run: |
+          chaos regression coverage experiments/examples/regression/checkout.yaml \
+            --fault network.loss \
+            --footprints experiments/examples/regression/checkout.footprints.yaml
 
   ui:
     name: ui — server + web · build + test

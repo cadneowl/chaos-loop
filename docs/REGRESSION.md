@@ -59,13 +59,43 @@ catalogue faults **in the categories the suite actually uses** — not the whole
 catalogue — so a web suite's score isn't dragged down by hardware faults
 (wifi/power/sensor) it will never run. Scope it explicitly with `--fault`.
 
-A cell is `covered` when a scenario pairs that fault (by `FaultSpec.name`) with
-that journey. Everything else is `unknown` and **counts as a gap** — v1 never
-marks a cell `n-a` without evidence (trace-based relevance is a later milestone).
+Each cell is one of:
 
-`comprehensiveness = covered / (covered + gaps)` — the *relevant* denominator
-(NA excluded). It is `n/a` (not a misleading 100%) when there are no relevant
-cells.
+* **covered** — a scenario pairs that fault (by `FaultSpec.name`) with the journey.
+* **n-a** — provably not-applicable: the fault only ever targets services (per the
+  suite's scenarios) that the journey never traverses. Requires *footprints*
+  (below) and always carries the evidence that backs it.
+* **unknown** — everything else; counts as a gap. A cell is never `n-a` without proof.
+
+`comprehensiveness = covered / (covered + gaps)` — the *relevant* denominator, so
+`n-a` cells don't count against you. It's `n/a` (not a misleading 100%) when there
+are no relevant cells.
+
+### Relevance: footprints turn phantom gaps into provable n-a
+
+A journey's **footprint** is the set of services it traverses. Give
+`chaos regression coverage` a `--footprints` map and any cell whose fault targets
+only services the journey never touches becomes `n-a` with evidence — instead of a
+phantom gap. Worked example: a `network.loss`-on-`valkey-cart` scenario is provably
+irrelevant to a *browse* journey that never touches `valkey-cart`, so that cell is
+`n-a`, and `--fault network.loss` coverage goes from `67%` to an honest `100%`.
+
+```yaml
+# footprints.yaml — normally derived from distributed traces (Tempo/Jaeger),
+# declared here for offline use. Service names match a fault's target_selector.
+"checkout.spec.ts:pay": [frontend, cart, valkey-cart, payment]
+"browse.spec.ts:list-products": [frontend, product-catalog]
+```
+
+```bash
+chaos regression coverage my-suite.yaml --fault network.loss --footprints footprints.yaml
+```
+
+Footprints come from a pluggable source (`regression/relevance.py`): a declarative
+map today, or a `TraceRelevanceSource` backed by a distributed-tracing client (the
+concrete Tempo/Jaeger client is the remaining wiring). A footprint is only ever
+*evidence for* irrelevance — a missing or intersecting footprint leaves the cell a
+gap, never a silent n-a.
 
 ## CLI
 
@@ -77,7 +107,8 @@ chaos regression scaffold <out.yaml> --suite-path ./e2e [--list-json DUMP]
 chaos regression validate <suite.yaml>
 
 # Render the coverage matrix (runs no scenarios; safe anywhere).
-chaos regression coverage <suite.yaml> [--fault NAME ...]
+#   --footprints enables provable n-a cells (see "Relevance" above).
+chaos regression coverage <suite.yaml> [--fault NAME ...] [--footprints MAP]
 
 # Replay every scenario, print verdicts + coverage. Exits non-zero on any regression.
 #   --dry-run stubs the oracle (all journeys pass) to exercise the flow with no
@@ -130,7 +161,9 @@ scenarios:
 ```
 
 A worked example ships at
-[`experiments/examples/regression/checkout.yaml`](../experiments/examples/regression/checkout.yaml).
+[`experiments/examples/regression/checkout.yaml`](../experiments/examples/regression/checkout.yaml),
+with footprints in
+[`checkout.footprints.yaml`](../experiments/examples/regression/checkout.footprints.yaml).
 
 ## Persistence
 
@@ -139,11 +172,13 @@ same SQLite DB as experiments; every verdict links to the per-scenario
 `ExperimentRecord` by `experiment_id`, so `chaos regression show` can drill into
 full per-scenario detail.
 
-## Scope (v1)
+## Scope
 
 Shipped: inherit a suite → replay under a fault → newly-failing verdict →
-coverage matrix (`covered` / `gap`). Read-only.
+coverage matrix (`covered` / `gap` / evidence-backed `n-a` via footprints).
+Read-only.
 
-Later: trace-based relevance (`n-a` with evidence) and a drift axis; negative
-"must-not-happen" assertions; connectors that ingest intent (Jira/GitLab) and
-propose scenarios back.
+Later: a concrete Tempo/Jaeger `TraceClient` (footprints from live traces, not
+just declared) and a chronic **drift** axis; negative "must-not-happen"
+assertions; connectors that ingest intent (Jira/GitLab) and propose scenarios
+back.

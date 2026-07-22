@@ -1,0 +1,24 @@
+# Per-journey service footprints for checkout.yaml — the set of services each
+# journey traverses. Feed to `chaos regression coverage --footprints`.
+#
+# Normally these come from distributed traces (run each journey once under
+# Tempo/Jaeger); declaring them by hand works offline and is fully honest as
+# long as it reflects reality. Service names must match the values used in a
+# scenario's fault target_selector (here: valkey-cart).
+#
+# With these footprints, the network.loss-on-valkey-cart scenario is proven
+# not-applicable to browse (which never touches valkey-cart) — turning what
+# looked like a coverage gap into an evidence-backed n/a.
+"checkout.spec.ts:add-to-cart":
+  - frontend
+  - cart
+  - valkey-cart
+"checkout.spec.ts:pay":
+  - frontend
+  - cart
+  - valkey-cart
+  - checkout
+  - payment
+"browse.spec.ts:list-products":
+  - frontend
+  - product-catalog

@@ -18,6 +18,7 @@ from orchestrator.store import ExperimentStore
 from shared.contracts import (
     AbortReason,
     CoverageMatrix,
+    CoverageState,
     ExperimentPlan,
     ExperimentState,
     SuiteRunRecord,
@@ -888,26 +889,43 @@ def regression_coverage_cmd(
         help="Scope the fault axis (repeatable). Default: catalogue faults in the "
         "categories the suite uses.",
     ),
+    footprints_path: Path | None = typer.Option(
+        None,
+        "--footprints",
+        help="YAML map {journey: [services it traverses]}. Enables provable n/a "
+        "cells (a fault whose target the journey never touches).",
+    ),
 ) -> None:
     """Render the fault-by-journey coverage matrix for a suite (no runs required)."""
     from regression.coverage import CoverageReporter
+    from regression.relevance import DeclarativeRelevanceSource
     from regression.scenario import load_suite
 
     suite = load_suite(suite_path)
     selected = list(fault or [])
-    matrix = CoverageReporter().render(suite, faults=selected)
+
+    footprints: dict[str, set[str]] | None = None
+    if footprints_path is not None:
+        raw = yaml.safe_load(footprints_path.read_text(encoding="utf-8")) or {}
+        source = DeclarativeRelevanceSource(raw)
+        footprints = asyncio.run(source.footprints(suite.all_journeys))
+
+    matrix = CoverageReporter().render(suite, faults=selected, footprints=footprints)
     _print_coverage_summary(matrix)
     # Detailed grid only when the caller scoped the axis (else it's unreadably wide).
     if selected:
         by_key = {(c.fault, c.journey): c for c in matrix.cells}
         table = Table("journey", *matrix.faults)
         for journey in matrix.journeys:
-            marks = [
-                "[green]✓[/green]"
-                if (cell := by_key.get((f, journey))) and cell.scenario_id
-                else "·"
-                for f in matrix.faults
-            ]
+            marks: list[str] = []
+            for f in matrix.faults:
+                cell = by_key.get((f, journey))
+                if cell and cell.scenario_id:
+                    marks.append("[green]✓[/green]")
+                elif cell and cell.state == CoverageState.NA:
+                    marks.append("[dim]n/a[/dim]")
+                else:
+                    marks.append("·")
             table.add_row(journey, *marks)
         console.print(table)
 
