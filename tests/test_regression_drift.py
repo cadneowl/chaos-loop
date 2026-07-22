@@ -12,17 +12,27 @@ from orchestrator.store import ExperimentStore
 from regression.drift import (
     baseline_passing,
     baseline_trustworthy,
+    compare_metric,
+    compare_metrics,
     compute_scenario_drift,
     drift_report,
     goldens_from_run,
 )
 from shared.contracts import (
     Golden,
+    MetricDirection,
+    MetricThreshold,
     RegressionOutcome,
     RegressionVerdict,
+    StatisticalSample,
     SuiteRunRecord,
     VerifyResult,
 )
+
+
+def _sample(metric: str, value: float) -> StatisticalSample:
+    """A flat distribution at ``value`` (every percentile == value)."""
+    return StatisticalSample.from_samples(metric, [value, value, value])
 
 
 def _verdict(
@@ -144,6 +154,85 @@ def test_drift_report_flags_unassessed_instead_of_false_regression() -> None:
     assert s.unassessed is True
     assert s.regressed == []
     assert s.drifted is False
+
+
+# ----- metric-distribution drift --------------------------------------------
+
+
+def test_compare_metric_higher_worse_regresses_past_budget() -> None:
+    t = MetricThreshold(metric="lat", query="q", percentile="p95", max_ratio=1.10)
+    # 100 -> 120 is +20%, past the 10% budget.
+    d = compare_metric(_sample("lat", 100.0), _sample("lat", 120.0), t)
+    assert d.regressed is True
+    assert d.ratio == 1.2
+    # 100 -> 105 is within budget.
+    d2 = compare_metric(_sample("lat", 100.0), _sample("lat", 105.0), t)
+    assert d2.regressed is False
+
+
+def test_compare_metric_abs_floor_suppresses_near_zero_flap() -> None:
+    t = MetricThreshold(metric="lat", query="q", max_ratio=1.10, abs_floor=10.0)
+    # Golden p95 is 1ms; a jump to 5ms is +400% but below the 10ms floor -> ignored.
+    d = compare_metric(_sample("lat", 1.0), _sample("lat", 5.0), t)
+    assert d.regressed is False
+
+
+def test_compare_metric_lower_worse_flags_a_drop() -> None:
+    t = MetricThreshold(
+        metric="rps", query="q", max_ratio=1.10, direction=MetricDirection.LOWER_WORSE
+    )
+    d = compare_metric(_sample("rps", 1000.0), _sample("rps", 500.0), t)
+    assert d.regressed is True
+
+
+def test_compare_metrics_flags_missing_metric() -> None:
+    t = MetricThreshold(metric="lat", query="q")
+    drifts = compare_metrics([_sample("lat", 100.0)], [], [t])  # not sampled this run
+    assert drifts[0].missing is True
+    assert drifts[0].regressed is False
+    assert drifts[0].ratio is None
+
+
+def _metric_verdict(
+    scenario_id: str,
+    baseline: list[StatisticalSample],
+    thresholds: list[MetricThreshold],
+) -> RegressionVerdict:
+    return RegressionVerdict(
+        scenario_id=scenario_id,
+        experiment_id="exp-000000000000",
+        outcome=RegressionOutcome.PASS,
+        verify_result=VerifyResult(
+            passed=True,
+            evidence={
+                "baseline_passing": [],
+                "baseline_metrics": [s.model_dump() for s in baseline],
+                "metric_thresholds": [t.model_dump() for t in thresholds],
+            },
+        ),
+    )
+
+
+def test_metric_drift_end_to_end_via_evidence() -> None:
+    t = MetricThreshold(metric="lat", query="q", percentile="p95", max_ratio=1.10)
+    # Golden run: p95 = 100. goldens_from_run freezes the distribution.
+    golden_run = SuiteRunRecord(
+        suite_id="suite-000000000001",
+        verdicts=[_metric_verdict("scn-000000000001", [_sample("lat", 100.0)], [t])],
+    )
+    goldens = goldens_from_run(golden_run, "v1")
+    assert goldens["scn-000000000001"].metrics[0].p95 == 100.0
+
+    # Later run: p95 crept to 130 at baseline -> chronic drift.
+    later = SuiteRunRecord(
+        suite_id="suite-000000000001",
+        verdicts=[_metric_verdict("scn-000000000001", [_sample("lat", 130.0)], [t])],
+    )
+    report = drift_report(later, goldens, "v1")
+    assert report.regressed_scenarios == 1
+    s = report.scenarios[0]
+    assert s.metric_regressions == ["lat"]
+    assert s.drifted is True
 
 
 # ----- storage --------------------------------------------------------------

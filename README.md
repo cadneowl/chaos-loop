@@ -567,7 +567,8 @@ The loop's other mode. Where a single experiment *discovers* a weakness, a
 scenarios and asserting everything that used to hold still holds. Each scenario
 is an `ExperimentPlan` under the hood, so it runs through the same state machine
 and the same safety gates; the pass/fail **oracle** is the customer's own suite
-(a Playwright project, or any exit-code command).
+(a Playwright project, any exit-code command, or a statistical metric
+distribution).
 
 ```mermaid
 flowchart TD
@@ -607,12 +608,15 @@ chaos regression show <srun-id>
 Design in one breath: the verdict is driven by the **customer's oracle** (not
 the built-in tester); the **newly-failing** delta (green-at-baseline →
 red-under-fault) is the *acute* signal, while a **golden baseline** catches
-*chronic* drift (a journey that quietly went red between releases); an all-red
-baseline reports `BASELINE_FAIL` rather than a misleading `PASS`; and coverage
-counts only relevant cells — with journey **footprints** promoting phantom gaps
-to evidence-backed `n/a` — so the number stays honest. A worked suite lives at
-[`experiments/examples/regression/checkout.yaml`](experiments/examples/regression/checkout.yaml);
-the full guide is [docs/REGRESSION.md](docs/REGRESSION.md).
+*chronic* drift — both boolean (a journey that quietly went red between releases)
+and **metric-distribution** (p95 latency creeping past its budget vs release
+N-1, via the metric oracle); an all-red baseline reports `BASELINE_FAIL` rather
+than a misleading `PASS`; and coverage counts only relevant cells — with journey
+**footprints** promoting phantom gaps to evidence-backed `n/a` — so the number
+stays honest. Worked suites live at
+[`experiments/examples/regression/`](experiments/examples/regression/) (boolean
+`checkout.yaml`, metric `latency.yaml`); the full guide is
+[docs/REGRESSION.md](docs/REGRESSION.md).
 
 ### Verify cluster + Chaos Mesh integration
 

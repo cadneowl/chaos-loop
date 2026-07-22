@@ -13,10 +13,14 @@ to hold still holds. Same machinery, inverted goal.
 - **Suite** — an ordered set of scenarios plus `all_journeys` (the full journey
   denominator) and the non-prod `safety` block every scenario inherits.
 - **Oracle** — the customer-owned pass/fail predicate, implemented as an
-  experiment plugin. Two ship in v1:
+  experiment plugin. Three ship today:
   - `regression-playwright` — inherit a Playwright suite; the verdict is the
     set of *newly-failing* journeys.
   - `regression-command` — any exit-code command (pytest, a health check).
+  - `regression-metric` — statistical: sample a metric distribution (latency,
+    error rate, throughput) at baseline and under fault; the verdict is any
+    percentile that moved past its budget in the *worse* direction. Also feeds
+    the chronic **metric drift** axis (below).
 - **Coverage matrix** — fault (catalogue) × journey (the suite's), tri-state:
   `covered` / `gap` / `n-a`.
 
@@ -226,6 +230,44 @@ chaos regression run my-suite.yaml --drift-against v1.2.3 --fail-on-drift
 > show` surfaces per-scenario verdicts, not historical drift; re-run against the
 > golden to recompute it.
 
+### Metric drift (statistical, not just boolean)
+
+The Playwright/command axis is boolean — a journey passed at baseline or it
+didn't. The **metric oracle** (`oracle: metric`) makes drift *distributional*:
+it freezes a golden's `StatisticalSample` (mean / p50 / p95 / p99) per metric,
+and a later run's clean baseline is flagged when a percentile creeps past its
+budget — "is p95 worse than release N-1?".
+
+```yaml
+oracle: metric
+oracle_defaults:
+  window_seconds: 300           # sample each metric over this window
+  metrics:
+    - metric: checkout_p95_latency_ms
+      query: histogram_quantile(0.95, sum by (le) (rate(...bucket[1m])))
+      percentile: p95
+      max_ratio: 1.20           # tolerate +20% before flagging
+    - metric: checkout_error_rate
+      query: sum(rate(...5xx[1m])) / sum(rate(...[1m]))
+      percentile: mean
+      max_ratio: 1.50
+      abs_floor: 0.001          # ignore drift when the golden is below this
+```
+
+`max_ratio` is the drift budget; `direction` is `higher_worse` (default —
+latency, error rate) or `lower_worse` (throughput, availability); `abs_floor`
+suppresses flapping on near-zero baselines. The same threshold drives both axes:
+the **acute** verdict (under-fault distribution vs the clean baseline, this run)
+and the **chronic** drift (clean baseline vs the golden). Metrics are sampled
+from Prometheus via `--prom-url` / `$PROM_URL`; `--dry-run` stubs the source.
+A worked example ships at
+[`experiments/examples/regression/latency.yaml`](../experiments/examples/regression/latency.yaml).
+
+> Goldens are keyed by `scenario_id`, which is derived deterministically from the
+> suite name + scenario **title** — so a scenario's golden survives edits and
+> reordering, but *renaming its title* starts a fresh baseline. Titles must be
+> unique within a suite (validated on load).
+
 ## Persistence
 
 Each suite run is stored as a `SuiteRunRecord` in the `suite_runs` table of the
@@ -237,9 +279,9 @@ full per-scenario detail. Golden baselines live in the `goldens` table.
 
 Shipped: inherit a suite → replay under a fault → newly-failing verdict →
 coverage matrix (`covered` / `gap` / evidence-backed `n-a` via footprints) →
-chronic **drift** axis (golden baselines). Read-only.
+chronic **drift** axis, both boolean (golden passing-set) and
+**metric-distribution** (statistical goldens, p95-vs-N-1). Read-only.
 
 Later: a concrete Tempo/Jaeger `TraceClient` (footprints from live traces, not
-just declared); metric-distribution drift (statistical goldens, not just the
-boolean baseline set); negative "must-not-happen" assertions; connectors that
-ingest intent (Jira/GitLab) and propose scenarios back.
+just declared); negative "must-not-happen" assertions; connectors that ingest
+intent (Jira/GitLab) and propose scenarios back.

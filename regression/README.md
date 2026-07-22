@@ -15,6 +15,7 @@ suite_runner.py        SuiteRunner — replay each scenario, classify the verdic
 oracles/
   playwright.py            inherit a Playwright project; newly-failing delta
   command.py               any exit-code command as the oracle
+  metric.py                statistical distributions; percentile drift budget (acute + chronic)
 ```
 
 The oracles are ordinary experiment plugins (`chaos.plugins` entry points), so

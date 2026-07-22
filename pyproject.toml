@@ -47,6 +47,7 @@ example-web-service = "plugins.examples.web_service_scenario:WebServiceScenario"
 # Regression oracles — inherit a customer suite (Playwright) or any exit-code command.
 regression-playwright = "regression.oracles.playwright:PlaywrightOraclePlugin"
 regression-command = "regression.oracles.command:CommandOraclePlugin"
+regression-metric = "regression.oracles.metric:MetricOraclePlugin"
 
 [tool.ruff]
 line-length = 110
