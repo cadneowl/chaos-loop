@@ -838,6 +838,11 @@ def regression_run_cmd(
     drift_against: str | None = typer.Option(
         None, "--drift-against", help="Report baseline drift vs the golden stored for this ref."
     ),
+    fail_on_drift: bool = typer.Option(
+        False,
+        "--fail-on-drift",
+        help="Exit non-zero if --drift-against finds any baseline regression (for CI gating).",
+    ),
 ) -> None:
     """Replay every scenario in a regression suite and report verdicts + coverage."""
     from regression.scenario import load_suite
@@ -845,6 +850,11 @@ def regression_run_cmd(
 
     if save_golden and not target_ref:
         raise typer.BadParameter("--save-golden requires --target-ref")
+    if target_ref and not save_golden:
+        console.print(
+            "[yellow]--target-ref given without --save-golden; it will be ignored. "
+            "Add --save-golden to store this run's baseline as a golden.[/yellow]"
+        )
 
     suite = load_suite(suite_path)
     store = _store(db)
@@ -894,11 +904,17 @@ def regression_run_cmd(
         from regression.drift import goldens_from_run
 
         goldens = goldens_from_run(record, target_ref)
+        skipped = len(record.verdicts) - len(goldens)
+        skipped_note = (
+            f"; {skipped} skipped (did not assess cleanly)" if skipped else ""
+        )
         store.save_goldens(suite.suite_id, target_ref, goldens)
         console.print(
             f"[green]saved golden[/green] for ref {target_ref!r} "
-            f"({len(goldens)} scenario(s))"
+            f"({len(goldens)} scenario(s){skipped_note})"
         )
+
+    drift_regressed = False
     if drift_against:
         from regression.drift import drift_report
 
@@ -909,9 +925,14 @@ def regression_run_cmd(
                 f"(save one with --save-golden --target-ref).[/yellow]"
             )
         else:
-            _print_drift(drift_report(record, goldens, drift_against))
+            report = drift_report(record, goldens, drift_against)
+            _print_drift(report)
+            drift_regressed = report.regressed_scenarios > 0
 
-    if any(v.outcome.value == "regressed" for v in record.verdicts):
+    acute_regressed = any(
+        v.outcome == RegressionOutcome.REGRESSED for v in record.verdicts
+    )
+    if acute_regressed or (fail_on_drift and drift_regressed):
         raise typer.Exit(code=1)
 
 
@@ -919,14 +940,19 @@ def _print_drift(report: DriftReport) -> None:
     console.print()
     table = Table("scenario", "baseline drift vs " + report.against_ref)
     for s in report.scenarios:
-        if s.missing_golden:
+        if s.unassessed:
+            detail = "[dim]did not assess cleanly this run — drift not comparable[/dim]"
+        elif s.missing_golden:
             detail = "[dim]no golden[/dim]"
-        elif s.regressed:
-            detail = "[red]regressed at baseline: " + ", ".join(s.regressed) + "[/red]"
-        elif s.recovered:
-            detail = "[green]recovered: " + ", ".join(s.recovered) + "[/green]"
-        else:
+        elif not s.regressed and not s.recovered:
             detail = "[dim]stable[/dim]"
+        else:
+            parts = []
+            if s.regressed:
+                parts.append("[red]regressed at baseline: " + ", ".join(s.regressed) + "[/red]")
+            if s.recovered:
+                parts.append("[green]recovered: " + ", ".join(s.recovered) + "[/green]")
+            detail = "  ".join(parts)
         table.add_row(s.title or s.scenario_id, detail)
     console.print(table)
     console.print(
@@ -953,8 +979,13 @@ def regression_goldens_cmd(
         return
     table = Table("target_ref", "scenarios", "captured")
     for ref, count, captured in refs:
-        table.add_row(ref, str(count), captured)
+        table.add_row(ref, str(count), _short_ts(captured))
     console.print(table)
+
+
+def _short_ts(iso: str) -> str:
+    """Trim an ISO-8601 UTC timestamp to second precision for display."""
+    return iso[:19].replace("T", " ")
 
 
 @regression_app.command("coverage")

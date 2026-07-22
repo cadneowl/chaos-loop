@@ -127,7 +127,7 @@ chaos regression run <suite.yaml> [--dry-run] [--profile static|hybrid|llm] [--d
 
 # Capture / compare the chronic drift baseline (see "Drift" below).
 chaos regression run <suite.yaml> --save-golden --target-ref v1.2.3
-chaos regression run <suite.yaml> --drift-against v1.2.3
+chaos regression run <suite.yaml> --drift-against v1.2.3 [--fail-on-drift]
 chaos regression goldens <suite.yaml> [--db PATH]
 
 # List recent suite runs, then drill into one.
@@ -205,9 +205,26 @@ golden, red at baseline now) and **recovered** (newly green). Goldens are stored
 in the `goldens` table keyed by `(suite_id, target_ref, scenario_id)`;
 `chaos regression goldens <suite>` lists the refs you've captured.
 
+Only a **cleanly-measured** baseline is trustworthy: a scenario that ended
+`ERROR` or `BASELINE_FAIL` never captured a real steady state, so `--save-golden`
+skips it (rather than freezing an empty baseline that would silently blind drift
+forever) and `--drift-against` marks it *unassessed* (rather than reporting every
+golden journey as falsely regressed). The save output reports how many scenarios
+were skipped.
+
+For CI, add `--fail-on-drift` so a baseline regression against the golden exits
+non-zero — otherwise drift is reported but the run still exits 0 (only *acute*
+under-fault regressions gate by default):
+
+```bash
+chaos regression run my-suite.yaml --drift-against v1.2.3 --fail-on-drift
+```
+
 > Drift capture rides along a normal run, so the golden reflects the *pre-fault*
 > baseline the oracle measured. A baseline-only fast path (no injection) is a
-> possible follow-up.
+> possible follow-up. The `DriftReport` is printed but not persisted — `regression
+> show` surfaces per-scenario verdicts, not historical drift; re-run against the
+> golden to recompute it.
 
 ## Persistence
 

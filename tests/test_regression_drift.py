@@ -11,6 +11,7 @@ from pathlib import Path
 from orchestrator.store import ExperimentStore
 from regression.drift import (
     baseline_passing,
+    baseline_trustworthy,
     compute_scenario_drift,
     drift_report,
     goldens_from_run,
@@ -24,12 +25,17 @@ from shared.contracts import (
 )
 
 
-def _verdict(scenario_id: str, title: str, passing: list[str]) -> RegressionVerdict:
+def _verdict(
+    scenario_id: str,
+    title: str,
+    passing: list[str],
+    outcome: RegressionOutcome = RegressionOutcome.PASS,
+) -> RegressionVerdict:
     return RegressionVerdict(
         scenario_id=scenario_id,
         title=title,
         experiment_id="exp-000000000000",
-        outcome=RegressionOutcome.PASS,
+        outcome=outcome,
         verify_result=VerifyResult(passed=True, evidence={"baseline_passing": passing}),
     )
 
@@ -92,6 +98,52 @@ def test_goldens_from_run_and_drift_report() -> None:
     drifted = {s.scenario_id: s for s in report.scenarios}
     assert drifted["scn-000000000001"].regressed == ["cart:pay"]
     assert drifted["scn-000000000002"].drifted is False
+
+
+# ----- trustworthiness: don't freeze / compare an unmeasured baseline -------
+
+
+def test_baseline_trustworthy_by_outcome() -> None:
+    assert baseline_trustworthy(_verdict("scn-000000000001", "t", [])) is True
+    assert (
+        baseline_trustworthy(
+            _verdict("scn-000000000001", "t", [], RegressionOutcome.REGRESSED)
+        )
+        is True
+    )
+    for bad in (RegressionOutcome.ERROR, RegressionOutcome.BASELINE_FAIL):
+        assert baseline_trustworthy(_verdict("scn-000000000001", "t", [], bad)) is False
+
+
+def test_goldens_from_run_skips_unclean_scenarios() -> None:
+    run = SuiteRunRecord(
+        suite_id="suite-000000000001",
+        verdicts=[
+            _verdict("scn-000000000001", "cart", ["cart:pay"]),
+            _verdict("scn-000000000002", "browse", [], RegressionOutcome.BASELINE_FAIL),
+            _verdict("scn-000000000003", "search", [], RegressionOutcome.ERROR),
+        ],
+    )
+    goldens = goldens_from_run(run, "v1")
+    # Only the cleanly-measured scenario is frozen — the empty/partial baselines
+    # of the BASELINE_FAIL / ERROR scenarios are NOT poisoned into goldens.
+    assert set(goldens) == {"scn-000000000001"}
+
+
+def test_drift_report_flags_unassessed_instead_of_false_regression() -> None:
+    goldens = {"scn-000000000001": Golden(target_ref="v1", passing_journeys=["a", "b"])}
+    # Current run: the scenario errored, so its baseline_passing is empty. Without
+    # the guard this would report a,b as falsely regressed.
+    run = SuiteRunRecord(
+        suite_id="suite-000000000001",
+        verdicts=[_verdict("scn-000000000001", "cart", [], RegressionOutcome.ERROR)],
+    )
+    report = drift_report(run, goldens, "v1")
+    assert report.regressed_scenarios == 0
+    s = report.scenarios[0]
+    assert s.unassessed is True
+    assert s.regressed == []
+    assert s.drifted is False
 
 
 # ----- storage --------------------------------------------------------------

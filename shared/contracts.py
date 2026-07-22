@@ -868,11 +868,12 @@ class ScenarioDrift(BaseModel):
         description="Journeys not green in the golden but passing at baseline now.",
     )
     missing_golden: bool = False  # no golden stored for this scenario at the ref
+    unassessed: bool = False  # scenario's baseline didn't measure cleanly (ERROR / BASELINE_FAIL)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def drifted(self) -> bool:
-        return bool(self.regressed)
+        return bool(self.regressed) and not self.unassessed
 
 
 class DriftReport(BaseModel):
