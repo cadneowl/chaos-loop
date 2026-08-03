@@ -9,7 +9,7 @@ authors = [{ name = "kosta" }]
 
 dependencies = [
     # Multi-backend LLM client (Anthropic, Ollama, OpenAI, etc.). Strategies use this.
-    "litellm>=1.91.0",
+    "litellm>=1.94.1",
     # Contracts
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
